@@ -19,6 +19,17 @@ namespace System.Runtime.CompilerServices
             InitializeArray(array, fldHandle.Value);
         }
 
+        private static unsafe void* GetSpanDataFrom(
+            RuntimeFieldHandle fldHandle,
+            RuntimeTypeHandle targetTypeHandle,
+            out int count)
+        {
+            fixed (int *pCount = &count)
+            {
+                return (void*)GetSpanDataFrom(fldHandle.Value, targetTypeHandle.Value, new IntPtr(pCount));
+            }
+        }
+
         public static int OffsetToStringData
         {
             [Intrinsic]
@@ -50,6 +61,7 @@ namespace System.Runtime.CompilerServices
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         public static extern object? GetObjectValue(object? obj);
 
+        [RequiresUnreferencedCode("Trimmer can't guarantee existence of class constructor")]
         public static void RunClassConstructor(RuntimeTypeHandle type)
         {
             if (type.Value == IntPtr.Zero)
@@ -129,7 +141,7 @@ namespace System.Runtime.CompilerServices
         internal static bool ObjectHasReferences(object obj)
         {
             // TODO: Missing intrinsic in interpreter
-            return RuntimeTypeHandle.HasReferences(obj.GetType() as RuntimeType);
+            return RuntimeTypeHandle.HasReferences((obj.GetType() as RuntimeType)!);
         }
 
         public static object GetUninitializedObject(
@@ -154,15 +166,6 @@ namespace System.Runtime.CompilerServices
             return GetUninitializedObjectInternal(new RuntimeTypeHandle(rt).Value);
         }
 
-        internal static long GetILBytesJitted()
-        {
-            return (long)EventPipeInternal.GetRuntimeCounterValue(EventPipeInternal.RuntimeCounters.JIT_IL_BYTES_JITTED);
-        }
-
-        internal static int GetMethodsJittedCount()
-        {
-            return (int)EventPipeInternal.GetRuntimeCounterValue(EventPipeInternal.RuntimeCounters.JIT_METHODS_JITTED);
-        }
 
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         private static extern unsafe void PrepareMethod(IntPtr method, IntPtr* instantiations, int ninst);
@@ -172,6 +175,12 @@ namespace System.Runtime.CompilerServices
 
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         private static extern void InitializeArray(Array array, IntPtr fldHandle);
+
+        [MethodImplAttribute(MethodImplOptions.InternalCall)]
+        private static extern unsafe IntPtr GetSpanDataFrom(
+            IntPtr fldHandle,
+            IntPtr targetTypeHandle,
+            IntPtr count);
 
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         private static extern void RunClassConstructor(IntPtr type);

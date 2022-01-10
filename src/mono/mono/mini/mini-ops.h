@@ -290,6 +290,7 @@ MINI_OP(OP_LCONV_TO_I,    "long_conv_to_i", LREG, LREG, NONE)
 MINI_OP(OP_LCONV_TO_OVF_I,"long_conv_to_ovf_i", LREG, LREG, NONE)
 MINI_OP(OP_LCONV_TO_OVF_U,"long_conv_to_ovf_u", LREG, LREG, NONE)
 
+/* inst_exc_name contains the exception name to throw */
 MINI_OP(OP_LADD_OVF,      "long_add_ovf", LREG, LREG, LREG)
 MINI_OP(OP_LADD_OVF_UN,   "long_add_ovf_un", LREG, LREG, LREG)
 MINI_OP(OP_LMUL_OVF,      "long_mul_ovf", LREG, LREG, LREG)
@@ -395,6 +396,8 @@ MINI_OP(OP_ICONV_TO_U1,   "int_conv_to_u1", IREG, IREG, NONE)
 MINI_OP(OP_ICONV_TO_I,    "int_conv_to_i", IREG, IREG, NONE)
 MINI_OP(OP_ICONV_TO_OVF_I,"int_conv_to_ovf_i", IREG, IREG, NONE)
 MINI_OP(OP_ICONV_TO_OVF_U,"int_conv_to_ovf_u", IREG, IREG, NONE)
+
+/* inst_exc_name contains the exception name to throw */
 MINI_OP(OP_IADD_OVF,      "int_add_ovf", IREG, IREG, IREG)
 MINI_OP(OP_IADD_OVF_UN,   "int_add_ovf_un", IREG, IREG, IREG)
 MINI_OP(OP_IMUL_OVF,      "int_mul_ovf", IREG, IREG, IREG)
@@ -639,6 +642,11 @@ MINI_OP(OP_FGETHIGH32, "float_gethigh32", IREG, FREG, NONE)
 
 MINI_OP(OP_JUMP_TABLE, "jump_table", IREG, NONE, NONE)
 
+/* Same as OP_IMUL_OVF_UN, but throws an OutOfMemoryException */
+/* Emulated */
+MINI_OP(OP_IMUL_OVF_UN_OOM,   "int_mul_ovf_un_oom", IREG, IREG, IREG)
+MINI_OP(OP_LMUL_OVF_UN_OOM,   "long_mul_ovf_un_oom", LREG, LREG, LREG)
+
 /* aot compiler */
 MINI_OP(OP_AOTCONST, "aotconst", IREG, NONE, NONE)
 MINI_OP(OP_PATCH_INFO, "patch_info", NONE, NONE, NONE)
@@ -763,6 +771,12 @@ MINI_OP(OP_LDELEMA2D, "ldelema2d", NONE, NONE, NONE)
 MINI_OP(OP_MEMCPY, "memcpy", NONE, NONE, NONE)
 /* inlined small memset with constant length */
 MINI_OP(OP_MEMSET, "memset", NONE, NONE, NONE)
+/*
+ * A RuntimeType object, the result ldtoken+GetTypeFromHandle.
+ * inst_p0 is a MonoClass.
+ */
+MINI_OP(OP_RTTYPE, "rttype", IREG, NONE, NONE)
+
 MINI_OP(OP_SAVE_LMF, "save_lmf", NONE, NONE, NONE)
 MINI_OP(OP_RESTORE_LMF, "restore_lmf", NONE, NONE, NONE)
 
@@ -1562,8 +1576,13 @@ MINI_OP3(OP_XOP_OVR_SCALAR_X_X_X_X, "xop_ovr_scalar_x_x_x_x", XREG, XREG, XREG, 
 MINI_OP(OP_XOP_OVR_BYSCALAR_X_X_X, "xop_ovr_byscalar_x_x_x", XREG, XREG, XREG)
 
 MINI_OP(OP_XCONCAT, "xconcat", XREG, XREG, XREG)
-
 MINI_OP(OP_XCAST, "xcast", XREG, XREG, NONE)
+MINI_OP(OP_XLOWER, "xlower", XREG, XREG, NONE)
+MINI_OP(OP_XUPPER, "xupper", XREG, XREG, NONE)
+MINI_OP(OP_XWIDEN, "xwiden", XREG, XREG, NONE)
+MINI_OP(OP_XWIDEN_UNSAFE, "xwiden_unsafe", XREG, XREG, NONE)
+MINI_OP(OP_XINSERT_LOWER, "xinsert_lower", XREG, XREG, XREG)
+MINI_OP(OP_XINSERT_UPPER, "xinsert_upper", XREG, XREG, XREG)
 
 /* Extract an element from a vector with a variable lane index.
  * The index is assumed to be in range.
@@ -1588,6 +1607,7 @@ MINI_OP3(OP_XINSERT_I4, "xinsert_i4", XREG, XREG, IREG, IREG)
 MINI_OP3(OP_XINSERT_I8, "xinsert_i8", XREG, XREG, LREG, IREG)
 MINI_OP3(OP_XINSERT_R4, "xinsert_r4", XREG, XREG, FREG, IREG)
 MINI_OP3(OP_XINSERT_R8, "xinsert_r8", XREG, XREG, FREG, IREG)
+
 
 MINI_OP(OP_LZCNT32, "lzcnt32", IREG, IREG, NONE)
 MINI_OP(OP_LZCNT64, "lzcnt64", LREG, LREG, NONE)
@@ -1740,6 +1760,7 @@ MINI_OP(OP_ARM64_UQXTN2, "arm64_uqxtn2", XREG, XREG, XREG)
 MINI_OP(OP_ARM64_SQXTUN2, "arm64_sqxtun2", XREG, XREG, XREG)
 
 MINI_OP(OP_ARM64_SELECT_SCALAR, "arm64_select_scalar", XREG, XREG, IREG)
+MINI_OP(OP_ARM64_SELECT_QUAD, "arm64_select_quad", XREG, XREG, IREG)
 
 MINI_OP(OP_ARM64_FCVTZU, "arm64_fcvtzu", XREG, XREG, NONE)
 MINI_OP(OP_ARM64_FCVTZS, "arm64_fcvtzs", XREG, XREG, NONE)
@@ -1806,5 +1827,12 @@ MINI_OP(OP_ARM64_ABSCOMPARE, "arm64_abscompare", XREG, XREG, XREG)
 MINI_OP(OP_ARM64_XNARROW_SCALAR, "arm64_xnarrow_scalar", XREG, XREG, NONE)
 
 MINI_OP3(OP_ARM64_EXT, "arm64_ext", XREG, XREG, XREG, IREG)
+
+MINI_OP3(OP_ARM64_SQRDMLAH, "arm64_sqrdmlah", XREG, XREG, XREG, XREG)
+MINI_OP3(OP_ARM64_SQRDMLAH_BYSCALAR, "arm64_sqrdmlah_byscalar", XREG, XREG, XREG, XREG)
+MINI_OP3(OP_ARM64_SQRDMLAH_SCALAR, "arm64_sqrdmlah_scalar", XREG, XREG, XREG, XREG)
+MINI_OP3(OP_ARM64_SQRDMLSH, "arm64_sqrdmlsh", XREG, XREG, XREG, XREG)
+MINI_OP3(OP_ARM64_SQRDMLSH_BYSCALAR, "arm64_sqrdmlsh_byscalar", XREG, XREG, XREG, XREG)
+MINI_OP3(OP_ARM64_SQRDMLSH_SCALAR, "arm64_sqrdmlsh_scalar", XREG, XREG, XREG, XREG)
 
 #endif // TARGET_ARM64

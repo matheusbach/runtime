@@ -6,7 +6,6 @@
 
 //
 
-
 #include "common.h"
 #include "mlinfo.h"
 #include "dllimport.h"
@@ -20,28 +19,18 @@
 #include "ilmarshalers.h"
 #include "interoputil.h"
 
-#ifdef FEATURE_PREJIT
-    #include "dataimage.h"
-#endif
-
 #ifdef FEATURE_COMINTEROP
 #include "comcallablewrapper.h"
 #include "runtimecallablewrapper.h"
 #include "dispparammarshaler.h"
 #endif // FEATURE_COMINTEROP
 
-
-#ifndef lengthof
-    #define lengthof(rg)    (sizeof(rg)/sizeof(rg[0]))
-#endif
-
-
 #ifdef FEATURE_COMINTEROP
     DEFINE_ASM_QUAL_TYPE_NAME(ENUMERATOR_TO_ENUM_VARIANT_CM_NAME, g_EnumeratorToEnumClassName, g_CorelibAsmName);
 
-    static const int        ENUMERATOR_TO_ENUM_VARIANT_CM_NAME_LEN    = lengthof(ENUMERATOR_TO_ENUM_VARIANT_CM_NAME);
+    static const int        ENUMERATOR_TO_ENUM_VARIANT_CM_NAME_LEN    = ARRAY_SIZE(ENUMERATOR_TO_ENUM_VARIANT_CM_NAME);
     static const char       ENUMERATOR_TO_ENUM_VARIANT_CM_COOKIE[]    = {""};
-    static const int        ENUMERATOR_TO_ENUM_VARIANT_CM_COOKIE_LEN  = lengthof(ENUMERATOR_TO_ENUM_VARIANT_CM_COOKIE);
+    static const int        ENUMERATOR_TO_ENUM_VARIANT_CM_COOKIE_LEN  = ARRAY_SIZE(ENUMERATOR_TO_ENUM_VARIANT_CM_COOKIE);
 
     DEFINE_ASM_QUAL_TYPE_NAME(COLOR_TRANSLATOR_ASM_QUAL_TYPE_NAME, g_ColorTranslatorClassName, g_DrawingAsmName);
     DEFINE_ASM_QUAL_TYPE_NAME(COLOR_ASM_QUAL_TYPE_NAME, g_ColorClassName, g_DrawingAsmName);
@@ -399,7 +388,6 @@ namespace
 //==========================================================================
 CustomMarshalerHelper *SetupCustomMarshalerHelper(LPCUTF8 strMarshalerTypeName, DWORD cMarshalerTypeNameBytes, LPCUTF8 strCookie, DWORD cCookieStrBytes, Assembly *pAssembly, TypeHandle hndManagedType)
 {
-#ifndef CROSSGEN_COMPILE
     CONTRACT (CustomMarshalerHelper*)
     {
         THROWS;
@@ -417,10 +405,6 @@ CustomMarshalerHelper *SetupCustomMarshalerHelper(LPCUTF8 strMarshalerTypeName, 
 
     // Retrieve the custom marshaler helper from the EE marshaling data.
     RETURN pMarshalingData->GetCustomMarshalerHelper(pAssembly, hndManagedType, strMarshalerTypeName, cMarshalerTypeNameBytes, strCookie, cCookieStrBytes);
-#else
-    _ASSERTE(false);
-    RETURN NULL;
-#endif
 }
 
 namespace
@@ -838,10 +822,8 @@ EEMarshalingData::EEMarshalingData(LoaderAllocator* pAllocator, CrstBase *pCrst)
     CONTRACTL_END;
 
     LockOwner lock = {pCrst, IsOwnerOfCrst};
-#ifndef CROSSGEN_COMPILE
     m_CMHelperHashtable.Init(INITIAL_NUM_CMHELPER_HASHTABLE_BUCKETS, &lock);
     m_SharedCMHelperToCMInfoMap.Init(INITIAL_NUM_CMINFO_HASHTABLE_BUCKETS, &lock);
-#endif // CROSSGEN_COMPILE
 }
 
 
@@ -896,7 +878,6 @@ void EEMarshalingData::operator delete(void *pMem)
     // the delete operator has nothing to do.
 }
 
-#ifndef CROSSGEN_COMPILE
 
 CustomMarshalerHelper *EEMarshalingData::GetCustomMarshalerHelper(Assembly *pAssembly, TypeHandle hndManagedType, LPCUTF8 strMarshalerTypeName, DWORD cMarshalerTypeNameBytes, LPCUTF8 strCookie, DWORD cCookieStrBytes)
 {
@@ -1044,7 +1025,6 @@ CustomMarshalerInfo *EEMarshalingData::GetCustomMarshalerInfo(SharedCustomMarsha
     pNewCMInfo.SuppressRelease();
     RETURN pNewCMInfo;
 }
-#endif // CROSSGEN_COMPILE
 
 #ifdef FEATURE_COMINTEROP
 OleColorMarshalingInfo *EEMarshalingData::GetOleColorMarshalingInfo()
@@ -2186,10 +2166,8 @@ MarshalInfo::MarshalInfo(Module* pModule,
                         || m_pMT->HasSameTypeDefAs(CoreLibBinder::GetClass(CLASS__VECTOR64T))
                         || m_pMT->HasSameTypeDefAs(CoreLibBinder::GetClass(CLASS__VECTOR128T))
                         || m_pMT->HasSameTypeDefAs(CoreLibBinder::GetClass(CLASS__VECTOR256T))
-#ifndef CROSSGEN_COMPILE
                             // Crossgen scenarios block Vector<T> from even being loaded
                             || m_pMT->HasSameTypeDefAs(CoreLibBinder::GetClass(CLASS__VECTORT))
-#endif // !CROSSGEN_COMPILE
                     )))
                 {
                     m_resID = IDS_EE_BADMARSHAL_GENERICS_RESTRICTION;
@@ -2202,7 +2180,7 @@ MarshalInfo::MarshalInfo(Module* pModule,
                     IfFailGoto(E_FAIL, lFail);
                 }
 
-                UINT managedSize = m_pMT->GetAlignedNumInstanceFieldBytes();
+                UINT managedSize = m_pMT->GetNumInstanceFieldBytes();
                 UINT  nativeSize = 0;
 
                 if ( nativeSize > 0xfff0 ||
@@ -3396,7 +3374,7 @@ VOID MarshalInfo::DumpMarshalInfo(Module* pModule, SigPointer sig, const SigType
 } // MarshalInfo::DumpMarshalInfo
 #endif //_DEBUG
 
-#if defined(FEATURE_COMINTEROP) && !defined(CROSSGEN_COMPILE)
+#if defined(FEATURE_COMINTEROP)
 DispParamMarshaler *MarshalInfo::GenerateDispParamMarshaler()
 {
     CONTRACT (DispParamMarshaler*)
@@ -3517,7 +3495,7 @@ DispatchWrapperType MarshalInfo::GetDispWrapperType()
     return WrapperType;
 }
 
-#endif // defined(FEATURE_COMINTEROP) && !defined(CROSSGEN_COMPILE)
+#endif // defined(FEATURE_COMINTEROP)
 
 // Returns true if the marshaler represented by this instance requires COM to have been started.
 bool MarshalInfo::MarshalerRequiresCOM()
@@ -3863,7 +3841,7 @@ void ArrayMarshalInfo::InitElementInfo(CorNativeType arrayNativeType, MarshalInf
             }
         }
 #ifdef FEATURE_COMINTEROP
-        else if (m_thElement == TypeHandle(CoreLibBinder::GetClass(CLASS__ERROR_WRAPPER)))
+        else if (g_pConfig->IsBuiltInCOMSupported() && m_thElement == TypeHandle(CoreLibBinder::GetClass(CLASS__ERROR_WRAPPER)))
         {
             m_vtElement = VT_ERROR;
         }
@@ -3904,7 +3882,6 @@ bool IsUnsupportedTypedrefReturn(MetaSig& msig)
     return msig.GetReturnTypeNormalized() == ELEMENT_TYPE_TYPEDBYREF;
 }
 
-#ifndef CROSSGEN_COMPILE
 
 #include "stubhelpers.h"
 FCIMPL3(void*, StubHelpers::CreateCustomMarshalerHelper,
@@ -3964,4 +3941,3 @@ FCIMPL3(void*, StubHelpers::CreateCustomMarshalerHelper,
 }
 FCIMPLEND
 
-#endif // CROSSGEN_COMPILE

@@ -158,6 +158,8 @@ namespace System.Globalization
             return s_userDefaultUICulture!;
         }
 
+        private static string GetCultureNotSupportedExceptionMessage() => GlobalizationMode.Invariant ? SR.Argument_CultureNotSupportedInInvariantMode : SR.Argument_CultureNotSupported;
+
         public CultureInfo(string name) : this(name, true)
         {
         }
@@ -174,7 +176,7 @@ namespace System.Globalization
 
             if (cultureData == null)
             {
-                throw new CultureNotFoundException(nameof(name), name, SR.Argument_CultureNotSupported);
+                throw new CultureNotFoundException(nameof(name), name, GetCultureNotSupportedExceptionMessage());
             }
 
             _cultureData = cultureData;
@@ -249,7 +251,7 @@ namespace System.Globalization
             }
 
             CultureData? cultureData = CultureData.GetCultureData(cultureName, false) ??
-                throw new CultureNotFoundException(nameof(cultureName), cultureName, SR.Argument_CultureNotSupported);
+                throw new CultureNotFoundException(nameof(cultureName), cultureName, GetCultureNotSupportedExceptionMessage());
 
             _cultureData = cultureData;
 
@@ -280,7 +282,7 @@ namespace System.Globalization
         }
 
         /// <summary>
-        /// Return a specific culture. A tad irrelevent now since we always
+        /// Return a specific culture. A tad irrelevant now since we always
         /// return valid data for neutral locales.
         ///
         /// Note that there's interesting behavior that tries to find a
@@ -577,6 +579,12 @@ namespace System.Globalization
         /// This one has the sort information (ie: de-DE_phoneb)
         /// </summary>
         internal string SortName => _sortName ??= _cultureData.SortName;
+
+        /// <summary>
+        /// The culture name to use to interop with the underlying native globalization libraries like ICU or Windows NLS APIs.
+        /// For example, we can have the name de_DE@collation=phonebook when using ICU for the German culture de-DE with the phonebook sorting behavior.
+        /// </summary>
+        internal string? InteropName => _cultureData.InteropName;
 
         public string IetfLanguageTag =>
                 // special case the compatibility cultures
@@ -1060,7 +1068,7 @@ namespace System.Globalization
             }
             catch (ArgumentException)
             {
-                throw new CultureNotFoundException(nameof(culture), culture, SR.Argument_CultureNotSupported);
+                throw new CultureNotFoundException(nameof(culture), culture, GetCultureNotSupportedExceptionMessage());
             }
 
             lock (lcidTable)
@@ -1096,7 +1104,7 @@ namespace System.Globalization
             }
 
             result = CreateCultureInfoNoThrow(name, useUserOverride: false) ??
-                throw new CultureNotFoundException(nameof(name), name, SR.Argument_CultureNotSupported);
+                throw new CultureNotFoundException(nameof(name), name, GetCultureNotSupportedExceptionMessage());
             result._isReadOnly = true;
 
             // Remember our name as constructed.  Do NOT use alternate sort name versions because

@@ -55,11 +55,10 @@ namespace System.Reflection
         }
 
         //
-        // KEEP IN SYNC WITH mcs/class/corlib/System.Reflection/RuntimeAssembly.cs
+        // KEEP IN SYNC WITH _MonoReflectionAssembly in /mono/mono/metadata/object-internals.h
         //
         #region VM dependency
         private IntPtr _mono_assembly;
-        private object? _evidence;       // Unused, kept for layout compatibility
         #endregion
 
         internal IntPtr GetUnderlyingNativeHandle() { return _mono_assembly; }
@@ -74,11 +73,12 @@ namespace System.Reflection
 
         public override bool ReflectionOnly => false;
 
+        [RequiresAssemblyFiles(ThrowingMessageInRAF)]
         public override string? CodeBase
         {
             get
             {
-                return get_code_base(this, false);
+                return get_code_base(this);
             }
         }
 
@@ -252,7 +252,7 @@ namespace System.Reflection
 
         public override AssemblyName GetName(bool copiedName)
         {
-            return AssemblyName.Create(_mono_assembly, CodeBase);
+            return AssemblyName.Create(_mono_assembly, get_code_base (this));
         }
 
         [RequiresUnreferencedCode("Types might be removed")]
@@ -274,7 +274,7 @@ namespace System.Reflection
 
         public override IList<CustomAttributeData> GetCustomAttributesData()
         {
-            return CustomAttributeData.GetCustomAttributes(this);
+            return RuntimeCustomAttributeData.GetCustomAttributesInternal(this);
         }
 
         public override object[] GetCustomAttributes(bool inherit)
@@ -409,6 +409,7 @@ namespace System.Reflection
             return res;
         }
 
+        [RequiresAssemblyFiles(ThrowingMessageInRAF)]
         public override FileStream? GetFile(string name)
         {
             if (name == null)
@@ -429,6 +430,7 @@ namespace System.Reflection
                 return null;
         }
 
+        [RequiresAssemblyFiles(ThrowingMessageInRAF)]
         public override FileStream[] GetFiles(bool getResourceModules)
         {
             if (Location.Length == 0)
@@ -467,7 +469,7 @@ namespace System.Reflection
         private extern string get_location();
 
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        private static extern string get_code_base(Assembly a, bool escaped);
+        private static extern string? get_code_base(Assembly a);
 
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         private static extern string get_fullname(Assembly a);

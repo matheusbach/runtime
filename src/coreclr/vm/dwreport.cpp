@@ -179,7 +179,7 @@ BOOL RegisterOutOfProcessWatsonCallbacks()
 //------------------------------------------------------------------------------
 // Description
 HRESULT DwGetFileVersionInfo(
-    __in_z LPCWSTR wszFilePath,
+    _In_z_ LPCWSTR wszFilePath,
     USHORT& major,
     USHORT& minor,
     USHORT& build,
@@ -222,7 +222,7 @@ HRESULT DwGetFileVersionInfo(
 //   None
 //------------------------------------------------------------------------------
 int DwGetAppDescription(                // Number of characters written.
-    __in_z LPCWSTR wszFilePath,          // Path to the executable.
+    _In_z_ LPCWSTR wszFilePath,          // Path to the executable.
     SString& pBuf // Put description here.
     )                     // Size of buf, wide chars.
 {
@@ -297,7 +297,7 @@ int DwGetAppDescription(                // Number of characters written.
 
     // Build the query key for the language-specific file description resource.
     WCHAR buf[64];                 //----+----1----+----2----+----3----+----4----+
-    _snwprintf_s(buf, NumItems(buf), _TRUNCATE, W("\\StringFileInfo\\%04x%04x\\FileDescription"),
+    _snwprintf_s(buf, ARRAY_SIZE(buf), _TRUNCATE, W("\\StringFileInfo\\%04x%04x\\FileDescription"),
                translation->language, translation->codePage);
 
     // Get the file description.
@@ -354,8 +354,8 @@ int DwGetAppDescription(                // Number of characters written.
 //   None
 //------------------------------------------------------------------------------
 int DwGetAssemblyVersion(               // Number of characters written.
-    __in_z LPCWSTR  wszFilePath,         // Path to the executable.
-    __inout_ecount(cchBuf) WCHAR *pBuf, // Put description here.
+    _In_z_ LPCWSTR  wszFilePath,         // Path to the executable.
+    _Inout_updates_(cchBuf) WCHAR *pBuf, // Put description here.
     int cchBuf)                     // Size of buf, wide chars.
 {
     CONTRACTL
@@ -429,7 +429,7 @@ int DwGetAssemblyVersion(               // Number of characters written.
 
     // Build the query key for the language-specific assembly version resource.
     WCHAR buf[64];                                                 //----+----1----+----2----+----3----+----4----+
-    _snwprintf_s(buf, NumItems(buf), _TRUNCATE, W("\\StringFileInfo\\%04x%04x\\Assembly Version"),
+    _snwprintf_s(buf, ARRAY_SIZE(buf), _TRUNCATE, W("\\StringFileInfo\\%04x%04x\\Assembly Version"),
                translation->language, translation->codePage);
 
     // Get the assembly version.
@@ -551,7 +551,7 @@ UINT_PTR GetIPOfThrowSite(
 //   false   -- otherwise.
 //
 //------------------------------------------------------------------------------
-BOOL ContainsUnicodeChars(__in_z LPCWSTR wsz)
+BOOL ContainsUnicodeChars(_In_z_ LPCWSTR wsz)
 {
     LIMITED_METHOD_CONTRACT;
 

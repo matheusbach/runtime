@@ -117,7 +117,7 @@ inline void RestoreNonvolatileRegisterPointers(PT_KNONVOLATILE_CONTEXT_POINTERS 
 //
 #ifdef _DEBUG
 void DumpClauses(IJitManager* pJitMan, const METHODTOKEN& MethToken, UINT_PTR uMethodStartPC, UINT_PTR dwControlPc);
-static void DoEHLog(DWORD lvl, __in_z const char *fmt, ...);
+static void DoEHLog(DWORD lvl, _In_z_ const char *fmt, ...);
 #define EH_LOG(expr)  { DoEHLog expr ; }
 #else
 #define EH_LOG(expr)
@@ -2035,7 +2035,7 @@ lExit:
 }
 
 // static
-void ExceptionTracker::DebugLogTrackerRanges(__in_z const char *pszTag)
+void ExceptionTracker::DebugLogTrackerRanges(_In_z_ const char *pszTag)
 {
 #ifdef _DEBUG
     CONTRACTL
@@ -4277,7 +4277,7 @@ void DumpClauses(IJitManager* pJitMan, const METHODTOKEN& MethToken, UINT_PTR uM
 
 static void DoEHLog(
     DWORD lvl,
-    __in_z const char *fmt,
+    _In_z_ const char *fmt,
     ...
     )
 {
@@ -4694,14 +4694,12 @@ VOID DECLSPEC_NORETURN UnwindManagedExceptionPass1(PAL_SEHException& ex, CONTEXT
                 break;
             }
 
-#ifdef FEATURE_WRITEBARRIER_COPY
             if (IsIPInWriteBarrierCodeCopy(controlPc))
             {
                 // Pretend we were executing the barrier function at its original location so that the unwinder can unwind the frame
                 controlPc = AdjustWriteBarrierIP(controlPc);
                 SetIP(frameContext, controlPc);
             }
-#endif // FEATURE_WRITEBARRIER_COPY
 
             UINT_PTR sp = GetSP(frameContext);
 
@@ -5174,13 +5172,11 @@ BOOL IsSafeToHandleHardwareException(PCONTEXT contextRecord, PEXCEPTION_RECORD e
 {
     PCODE controlPc = GetIP(contextRecord);
 
-#ifdef FEATURE_WRITEBARRIER_COPY
     if (IsIPInWriteBarrierCodeCopy(controlPc))
     {
         // Pretend we were executing the barrier function at its original location
         controlPc = AdjustWriteBarrierIP(controlPc);
     }
-#endif // FEATURE_WRITEBARRIER_COPY
 
     return g_fEEStarted && (
         exceptionRecord->ExceptionCode == STATUS_BREAKPOINT ||
@@ -5259,14 +5255,12 @@ BOOL HandleHardwareException(PAL_SEHException* ex)
         {
             GCX_COOP();     // Must be cooperative to modify frame chain.
 
-#ifdef FEATURE_WRITEBARRIER_COPY
             if (IsIPInWriteBarrierCodeCopy(controlPc))
             {
                 // Pretend we were executing the barrier function at its original location so that the unwinder can unwind the frame
                 controlPc = AdjustWriteBarrierIP(controlPc);
                 SetIP(ex->GetContextRecord(), controlPc);
             }
-#endif // FEATURE_WRITEBARRIER_COPY
 
             if (IsIPInMarkedJitHelper(controlPc))
             {

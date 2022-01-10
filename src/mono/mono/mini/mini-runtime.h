@@ -111,6 +111,13 @@ jit_code_hash_unlock (MonoJitMemoryManager *jit_mm)
 	mono_locks_os_release(&(jit_mm)->jit_code_hash_lock, DomainJitCodeHashLock);
 }
 
+/* Per vtable data maintained by the EE */
+typedef struct {
+	/* interp virtual method table */
+	gpointer *interp_vtable;
+	MonoFtnDesc **gsharedvt_vtable;
+} MonoVTableEEData;
+
 /*
  * Stores state need to resume exception handling when using LLVM
  */
@@ -194,9 +201,19 @@ struct MonoJitTlsData {
 #endif
 };
 
+typedef struct {
+	MonoMethod *method;
+	/* Either the IL offset of the currently executing code, or -1 */
+	int il_offset;
+	/* For every arg+local, either its address on the stack, or NULL */
+	gpointer data [1];
+} MonoMethodILState;
+
 #define MONO_LMFEXT_DEBUGGER_INVOKE 1
 #define MONO_LMFEXT_INTERP_EXIT 2
 #define MONO_LMFEXT_INTERP_EXIT_WITH_CTX 3
+#define MONO_LMFEXT_JIT_ENTRY 4
+#define MONO_LMFEXT_IL_STATE 5
 
 /*
  * The MonoLMF structure is arch specific, it includes at least these fields.
@@ -224,6 +241,7 @@ typedef struct {
 	int kind;
 	MonoContext ctx; /* valid if kind == DEBUGGER_INVOKE || kind == INTERP_EXIT_WITH_CTX */
 	gpointer interp_exit_data; /* valid if kind == INTERP_EXIT || kind == INTERP_EXIT_WITH_CTX */
+	MonoMethodILState *il_state; /* valid if kind == IL_STATE */
 #if defined (_MSC_VER)
 	gboolean interp_exit_label_set;
 #endif
@@ -244,7 +262,6 @@ typedef struct MonoDebugOptions {
 	gboolean suspend_on_exception;
 	gboolean suspend_on_unhandled;
 	gboolean dyn_runtime_invoke;
-	gboolean gdb;
 	gboolean lldb;
 
 	/*
@@ -452,8 +469,9 @@ extern GHashTable *mono_single_method_hash;
 extern GList* mono_aot_paths;
 extern MonoDebugOptions mini_debug_options;
 extern GSList *mono_interp_only_classes;
-extern char *sdb_options;
 extern MonoMethodDesc *mono_stats_method_desc;
+
+MONO_COMPONENT_API MonoDebugOptions *get_mini_debug_options (void);
 
 /*
 This struct describes what execution engine feature to use.
@@ -510,10 +528,7 @@ MonoEECallbacks*       mono_interp_callbacks_pointer;
 
 #define mini_get_interp_callbacks() (mono_interp_callbacks_pointer)
 
-typedef struct _MonoDebuggerCallbacks MonoDebuggerCallbacks;
-
-void                   mini_install_dbg_callbacks (MonoDebuggerCallbacks *cbs);
-MonoDebuggerCallbacks  *mini_get_dbg_callbacks (void);
+MONO_COMPONENT_API const MonoEECallbacks* mini_get_interp_callbacks_api (void);
 
 MonoDomain* mini_init                      (const char *filename, const char *runtime_version);
 void        mini_cleanup                   (MonoDomain *domain);
@@ -530,10 +545,10 @@ void      mono_precompile_assemblies        (void);
 MONO_API int       mono_parse_default_optimizations  (const char* p);
 gboolean          mono_running_on_valgrind (void);
 
-MonoLMF * mono_get_lmf                      (void);
+MONO_COMPONENT_API MonoLMF * mono_get_lmf                      (void);
 void      mono_set_lmf                      (MonoLMF *lmf);
-void      mono_push_lmf                     (MonoLMFExt *ext);
-void      mono_pop_lmf                      (MonoLMF *lmf);
+MONO_COMPONENT_API void      mono_push_lmf                     (MonoLMFExt *ext);
+MONO_COMPONENT_API void      mono_pop_lmf                      (MonoLMF *lmf);
 
 MONO_API MONO_RT_EXTERNAL_ONLY void
 mono_jit_set_domain      (MonoDomain *domain);
@@ -555,7 +570,7 @@ gpointer  mono_resolve_patch_target_ext     (MonoMemoryManager *mem_manager, Mon
 void mini_register_jump_site                (MonoMethod *method, gpointer ip);
 void mini_patch_jump_sites                  (MonoMethod *method, gpointer addr);
 void mini_patch_llvm_jit_callees            (MonoMethod *method, gpointer addr);
-gpointer  mono_jit_search_all_backends_for_jit_info (MonoMethod *method, MonoJitInfo **ji);
+MONO_COMPONENT_API gpointer  mono_jit_search_all_backends_for_jit_info (MonoMethod *method, MonoJitInfo **ji);
 gpointer  mono_jit_find_compiled_method_with_jit_info (MonoMethod *method, MonoJitInfo **ji);
 gpointer  mono_jit_find_compiled_method     (MonoMethod *method);
 gpointer mono_jit_compile_method (MonoMethod *method, MonoError *error);
@@ -569,12 +584,9 @@ const char*mono_ji_type_to_string           (MonoJumpInfoType type);
 void      mono_print_ji                     (const MonoJumpInfo *ji);
 MONO_API void      mono_print_method_from_ip         (void *ip);
 MONO_API char     *mono_pmip                         (void *ip);
+MONO_API char     *mono_pmip_u                       (void *ip);
 MONO_API int mono_ee_api_version (void);
 gboolean  mono_debug_count                  (void);
-
-#ifdef __linux__
-#define XDEBUG_ENABLED 1
-#endif
 
 #ifdef __linux__
 /* maybe enable also for other systems? */

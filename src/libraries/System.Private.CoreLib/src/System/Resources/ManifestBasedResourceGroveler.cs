@@ -139,7 +139,7 @@ namespace System.Resources
             Debug.Assert(a != null, "assembly != null");
 
             NeutralResourcesLanguageAttribute? attr = a.GetCustomAttribute<NeutralResourcesLanguageAttribute>();
-            if (attr == null)
+            if (attr == null || (GlobalizationMode.Invariant && GlobalizationMode.PredefinedCulturesOnly))
             {
                 fallbackLocation = UltimateResourceFallbackLocation.MainAssembly;
                 return CultureInfo.InvariantCulture;
@@ -191,7 +191,7 @@ namespace System.Resources
                 if (bytes == ResourceManager.MagicNumber)
                 {
                     int resMgrHeaderVersion = br.ReadInt32();
-                    string? readerTypeName = null, resSetTypeName = null;
+                    string? readerTypeName, resSetTypeName;
                     if (resMgrHeaderVersion == ResourceManager.HeaderVersionNumber)
                     {
                         br.ReadInt32();  // We don't want the number of bytes to skip.

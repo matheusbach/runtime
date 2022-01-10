@@ -196,7 +196,7 @@ namespace System.Reflection
             }
 
             int initialSize = Math.Max(res.Length, 16);
-            List<object>? a = null;
+            List<object>? a;
             ICustomAttributeProvider? btype = obj;
             object[] array;
 
@@ -309,7 +309,7 @@ namespace System.Reflection
         }
 
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [DynamicDependency("#ctor(System.Reflection.ConstructorInfo,System.Reflection.Assembly,System.IntPtr,System.UInt32)", typeof(CustomAttributeData))]
+        [DynamicDependency("#ctor(System.Reflection.ConstructorInfo,System.Reflection.Assembly,System.IntPtr,System.UInt32)", typeof(RuntimeCustomAttributeData))]
         [DynamicDependency("#ctor(System.Reflection.MemberInfo,System.Object)", typeof(CustomAttributeNamedArgument))]
         [DynamicDependency("#ctor(System.Type,System.Object)", typeof(CustomAttributeTypedArgument))]
         private static extern CustomAttributeData[] GetCustomAttributesDataInternal(ICustomAttributeProvider obj);
@@ -371,7 +371,7 @@ namespace System.Reflection
             }
 
             int initialSize = Math.Max(res.Count, 16);
-            List<CustomAttributeData>? a = null;
+            List<CustomAttributeData>? a;
             ICustomAttributeProvider? btype = obj;
 
             /* Non-inherit case */
@@ -544,9 +544,9 @@ namespace System.Reflection
             count = 0;
 
             if ((Attributes & TypeAttributes.Serializable) != 0)
-                attrsData[count++] = new CustomAttributeData((typeof(SerializableAttribute)).GetConstructor(Type.EmptyTypes)!);
+                attrsData[count++] = new RuntimeCustomAttributeData((typeof(SerializableAttribute)).GetConstructor(Type.EmptyTypes)!);
             if ((Attributes & TypeAttributes.Import) != 0)
-                attrsData[count++] = new CustomAttributeData((typeof(ComImportAttribute)).GetConstructor(Type.EmptyTypes)!);
+                attrsData[count++] = new RuntimeCustomAttributeData((typeof(ComImportAttribute)).GetConstructor(Type.EmptyTypes)!);
 
             return attrsData;
         }
@@ -738,7 +738,7 @@ namespace System.Reflection
 
         private static AttributeUsageAttribute RetrieveAttributeUsage(Type attributeType)
         {
-            AttributeUsageAttribute? usageAttribute = null;
+            AttributeUsageAttribute? usageAttribute;
             /* Usage a thread-local cache to speed this up, since it is called a lot from GetCustomAttributes () */
             if (usage_cache == null)
                 usage_cache = new Dictionary<Type, AttributeUsageAttribute>();

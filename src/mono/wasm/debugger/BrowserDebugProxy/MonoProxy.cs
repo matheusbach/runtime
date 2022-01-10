@@ -22,10 +22,15 @@ namespace Microsoft.WebAssembly.Diagnostics
         private static HttpClient client = new HttpClient();
         private HashSet<SessionId> sessions = new HashSet<SessionId>();
         private Dictionary<SessionId, ExecutionContext> contexts = new Dictionary<SessionId, ExecutionContext>();
+        private const string sPauseOnUncaught = "pause_on_uncaught";
+        private const string sPauseOnCaught = "pause_on_caught";
+        // index of the runtime in a same JS page/process
+        public int RuntimeId { get; private init; }
 
-        public MonoProxy(ILoggerFactory loggerFactory, IList<string> urlSymbolServerList) : base(loggerFactory)
+        public MonoProxy(ILoggerFactory loggerFactory, IList<string> urlSymbolServerList, int runtimeId = 0) : base(loggerFactory)
         {
             this.urlSymbolServerList = urlSymbolServerList ?? new List<string>();
+            RuntimeId = runtimeId;
         }
 
         internal ExecutionContext GetContext(SessionId sessionId)
@@ -44,6 +49,34 @@ namespace Microsoft.WebAssembly.Diagnostics
         }
 
         internal Task<Result> SendMonoCommand(SessionId id, MonoCommands cmd, CancellationToken token) => SendCommand(id, "Runtime.evaluate", JObject.FromObject(cmd), token);
+
+        internal void SendLog(SessionId sessionId, string message, CancellationToken token)
+        {
+            if (!contexts.TryGetValue(sessionId, out ExecutionContext context))
+                return;
+            /*var o = JObject.FromObject(new
+            {
+                entry = JObject.FromObject(new
+                {
+                    source = "recommendation",
+                    level = "warning",
+                    text = message
+                })
+            });
+            SendEvent(id, "Log.enabled", null, token);
+            SendEvent(id, "Log.entryAdded", o, token);*/
+            var o = JObject.FromObject(new
+            {
+                type = "warning",
+                args = new JArray(JObject.FromObject(new
+                                {
+                                    type = "string",
+                                    value = message,
+                                })),
+                executionContextId = context.Id
+            });
+            SendEvent(sessionId, "Runtime.consoleAPICalled", o, token);
+        }
 
         protected override async Task<bool> AcceptEvent(SessionId sessionId, string method, JObject args, CancellationToken token)
         {
@@ -80,7 +113,7 @@ namespace Microsoft.WebAssembly.Diagnostics
                             {
                                 if (a.Type != JTokenType.Array)
                                 {
-                                    logger.LogDebug("Invalid event raised args, expected an array: {a}");
+                                    logger.LogDebug($"Invalid event raised args, expected an array: {a.Type}");
                                 }
                                 else
                                 {
@@ -114,17 +147,59 @@ namespace Microsoft.WebAssembly.Diagnostics
                             bool? is_default = aux_data["isDefault"]?.Value<bool>();
                             if (is_default == true)
                             {
-                                await OnDefaultContext(sessionId, new ExecutionContext { Id = id, AuxData = aux_data }, token);
+                                await OnDefaultContext(sessionId, new ExecutionContext(new MonoSDBHelper (this, logger, sessionId), id, aux_data), token);
                             }
                         }
                         return true;
                     }
 
+                case "Runtime.exceptionThrown":
+                    {
+                        // Don't process events from sessions we aren't tracking
+                        if (!contexts.TryGetValue(sessionId, out ExecutionContext context))
+                            return false;
+
+                        if (!context.IsRuntimeReady)
+                        {
+                            string exceptionError = args?["exceptionDetails"]?["exception"]?["value"]?.Value<string>();
+                            if (exceptionError == sPauseOnUncaught || exceptionError == sPauseOnCaught)
+                                return true;
+                        }
+                        break;
+                    }
+
                 case "Debugger.paused":
                     {
+                        // Don't process events from sessions we aren't tracking
+                        if (!contexts.TryGetValue(sessionId, out ExecutionContext context))
+                            return false;
+
+                        if (!context.IsRuntimeReady)
+                        {
+                            string reason = args?["reason"]?.Value<string>();
+                            if (reason == "exception")
+                            {
+                                string exceptionError = args?["data"]?["value"]?.Value<string>();
+                                if (exceptionError == sPauseOnUncaught)
+                                {
+                                    await SendCommand(sessionId, "Debugger.resume", new JObject(), token);
+                                    if (context.PauseOnExceptions == PauseOnExceptionsKind.Unset)
+                                        context.PauseOnExceptions = PauseOnExceptionsKind.Uncaught;
+                                    return true;
+                                }
+                                if (exceptionError == sPauseOnCaught)
+                                {
+                                    await SendCommand(sessionId, "Debugger.resume", new JObject(), token);
+                                    context.PauseOnExceptions = PauseOnExceptionsKind.All;
+                                    return true;
+                                }
+                            }
+                        }
+
                         //TODO figure out how to stich out more frames and, in particular what happens when real wasm is on the stack
                         string top_func = args?["callFrames"]?[0]?["functionName"]?.Value<string>();
                         switch (top_func) {
+                            // keep function names un-mangled via src\mono\wasm\runtime\rollup.config.js
                             case "mono_wasm_runtime_ready":
                             case "_mono_wasm_runtime_ready":
                                 {
@@ -132,11 +207,17 @@ namespace Microsoft.WebAssembly.Diagnostics
                                     await SendCommand(sessionId, "Debugger.resume", new JObject(), token);
                                     return true;
                                 }
-                            case "mono_wasm_fire_bp":
-                            case "_mono_wasm_fire_bp":
-                            case "_mono_wasm_fire_exception":
+                            case "mono_wasm_fire_debugger_agent_message":
+                            case "_mono_wasm_fire_debugger_agent_message":
                                 {
-                                    return await OnPause(sessionId, args, token);
+                                    try {
+                                        return await OnReceiveDebuggerAgentEvent(sessionId, args, token);
+                                    }
+                                    catch (Exception) //if the page is refreshed maybe it stops here.
+                                    {
+                                        await SendCommand(sessionId, "Debugger.resume", new JObject(), token);
+                                        return true;
+                                    }
                                 }
                         }
                         break;
@@ -173,7 +254,7 @@ namespace Microsoft.WebAssembly.Diagnostics
 
                 case "Target.targetDestroyed":
                     {
-                        await SendMonoCommand(sessionId, MonoCommands.DetachDebugger(), token);
+                        await SendMonoCommand(sessionId, MonoCommands.DetachDebugger(RuntimeId), token);
                         break;
                     }
             }
@@ -186,7 +267,7 @@ namespace Microsoft.WebAssembly.Diagnostics
             if (contexts.TryGetValue(sessionId, out ExecutionContext context) && context.IsRuntimeReady)
                 return true;
 
-            Result res = await SendMonoCommand(sessionId, MonoCommands.IsRuntimeReady(), token);
+            Result res = await SendMonoCommand(sessionId, MonoCommands.IsRuntimeReady(RuntimeId), token);
             return res.Value?["result"]?["value"]?.Value<bool>() ?? false;
         }
 
@@ -213,7 +294,7 @@ namespace Microsoft.WebAssembly.Diagnostics
                     {
                         Result resp = await SendCommand(id, method, args, token);
 
-                        context.DebuggerId = resp.Value["debuggerId"]?.ToString();
+                        context.DebugId = resp.Value["DebugId"]?.ToString();
 
                         if (await IsRuntimeAlreadyReadyAlready(id, token))
                             await RuntimeReady(id, token);
@@ -308,7 +389,7 @@ namespace Microsoft.WebAssembly.Diagnostics
 
                 case "Debugger.removeBreakpoint":
                     {
-                        await RemoveBreakpoint(id, args, token);
+                        await RemoveBreakpoint(id, args, false, token);
                         break;
                     }
 
@@ -330,7 +411,7 @@ namespace Microsoft.WebAssembly.Diagnostics
                         {
                             case "scope":
                                 return await OnSetVariableValue(id,
-                                    int.Parse(objectId.Value),
+                                    objectId.Value,
                                     args?["variableName"]?.Value<string>(),
                                     args?["newValue"],
                                     token);
@@ -348,7 +429,17 @@ namespace Microsoft.WebAssembly.Diagnostics
                     {
                         return await Step(id, StepKind.Over, token);
                     }
-
+                case "Runtime.evaluate":
+                    {
+                        if (context.CallStack != null)
+                        {
+                            Frame scope = context.CallStack.First<Frame>();
+                            return await OnEvaluateOnCallFrame(id,
+                                    scope.Id,
+                                    args?["expression"]?.Value<string>(), token);
+                        }
+                        break;
+                    }
                 case "Debugger.evaluateOnCallFrame":
                     {
                         if (!DotnetObjectId.TryParse(args?["callFrameId"], out DotnetObjectId objectId))
@@ -358,7 +449,7 @@ namespace Microsoft.WebAssembly.Diagnostics
                         {
                             case "scope":
                                 return await OnEvaluateOnCallFrame(id,
-                                    int.Parse(objectId.Value),
+                                    objectId.Value,
                                     args?["expression"]?.Value<string>(), token);
                             default:
                                 return false;
@@ -370,8 +461,12 @@ namespace Microsoft.WebAssembly.Diagnostics
                         if (!DotnetObjectId.TryParse(args?["objectId"], out DotnetObjectId objectId))
                             break;
 
-                        Result result = await RuntimeGetProperties(id, objectId, args, token);
-                        SendResponse(id, result, token);
+                        var ret = await RuntimeGetPropertiesInternal(id, objectId, args, token, true);
+                        if (ret == null) {
+                            SendResponse(id, Result.Err($"Unable to RuntimeGetProperties '{objectId}'"), token);
+                        }
+                        else
+                            SendResponse(id, Result.OkFromObject(ret), token);
                         return true;
                     }
 
@@ -380,7 +475,7 @@ namespace Microsoft.WebAssembly.Diagnostics
                         if (!(DotnetObjectId.TryParse(args["objectId"], out DotnetObjectId objectId) && objectId.Scheme == "cfo_res"))
                             break;
 
-                        await SendMonoCommand(id, MonoCommands.ReleaseObject(objectId), token);
+                        await SendMonoCommand(id, MonoCommands.ReleaseObject(RuntimeId, objectId), token);
                         SendResponse(id, Result.OkFromObject(new { }), token);
                         return true;
                     }
@@ -388,7 +483,16 @@ namespace Microsoft.WebAssembly.Diagnostics
                 case "Debugger.setPauseOnExceptions":
                     {
                         string state = args["state"].Value<string>();
-                        await SendMonoCommand(id, MonoCommands.SetPauseOnExceptions(state), token);
+                        context.PauseOnExceptions = state switch
+                        {
+                            "all"      => PauseOnExceptionsKind.All,
+                            "uncaught" => PauseOnExceptionsKind.Uncaught,
+                            "none"     => PauseOnExceptionsKind.None,
+                            _          => PauseOnExceptionsKind.Unset
+                        };
+
+                        if (context.IsRuntimeReady)
+                            await context.SdbAgent.EnableExceptions(context.PauseOnExceptions, token);
                         // Pass this on to JS too
                         return false;
                     }
@@ -403,8 +507,6 @@ namespace Microsoft.WebAssembly.Diagnostics
                     }
                 case "DotnetDebugger.getMethodLocation":
                     {
-                        Console.WriteLine("set-breakpoint-by-method: " + id + " " + args);
-
                         DebugStore store = await RuntimeReady(id, token);
                         string aname = args["assemblyName"]?.Value<string>();
                         string typeName = args["typeName"]?.Value<string>();
@@ -439,8 +541,8 @@ namespace Microsoft.WebAssembly.Diagnostics
                         {
                             // Maybe this is an async method, in which case the debug info is attached
                             // to the async method implementation, in class named:
-                            //      `{type_name}/<method_name>::MoveNext`
-                            methodInfo = assembly.TypesByName.Values.SingleOrDefault(t => t.FullName.StartsWith($"{typeName}/<{methodName}>"))?
+                            //      `{type_name}.<method_name>::MoveNext`
+                            methodInfo = assembly.TypesByName.Values.SingleOrDefault(t => t.FullName.StartsWith($"{typeName}.<{methodName}>"))?
                                 .Methods.FirstOrDefault(mi => mi.Name == "MoveNext");
                         }
 
@@ -460,88 +562,173 @@ namespace Microsoft.WebAssembly.Diagnostics
                     }
                 case "Runtime.callFunctionOn":
                     {
-                        if (!DotnetObjectId.TryParse(args["objectId"], out DotnetObjectId objectId))
-                            return false;
-
-                        if (objectId.Scheme == "scope")
-                        {
+                        try {
+                            return await CallOnFunction(id, args, token);
+                        }
+                        catch (Exception){
                             SendResponse(id,
                                 Result.Exception(new ArgumentException(
-                                    $"Runtime.callFunctionOn not supported with scope ({objectId}).")),
+                                    $"Runtime.callFunctionOn not supported with ({args["objectId"]}).")),
                                 token);
                             return true;
                         }
-
-                        Result res = await SendMonoCommand(id, MonoCommands.CallFunctionOn(args), token);
-                        JTokenType? res_value_type = res.Value?["result"]?["value"]?.Type;
-
-                        if (res.IsOk && res_value_type == JTokenType.Object || res_value_type == JTokenType.Object)
-                            res = Result.OkFromObject(new { result = res.Value["result"]["value"] });
-
-                        SendResponse(id, res, token);
-                        return true;
                     }
             }
 
             return false;
         }
+        private async Task<bool> CallOnFunction(MessageId id, JObject args, CancellationToken token)
+        {
+            var context = GetContext(id);
+            if (!DotnetObjectId.TryParse(args["objectId"], out DotnetObjectId objectId)) {
+                return false;
+            }
+            switch (objectId.Scheme)
+            {
+                case "object":
+                case "methodId":
+                    args["details"]  = await context.SdbAgent.GetObjectProxy(objectId.Value, token);
+                    break;
+                case "valuetype":
+                    args["details"]  = await context.SdbAgent.GetValueTypeProxy(objectId.Value, token);
+                    break;
+                case "pointer":
+                    args["details"]  = await context.SdbAgent.GetPointerContent(objectId.Value, token);
+                    break;
+                case "array":
+                    args["details"]  = await context.SdbAgent.GetArrayValuesProxy(objectId.Value, token);
+                    break;
+                case "cfo_res":
+                {
+                    Result cfo_res = await SendMonoCommand(id, MonoCommands.CallFunctionOn(RuntimeId, args), token);
+                    cfo_res = Result.OkFromObject(new { result = cfo_res.Value?["result"]?["value"]});
+                    SendResponse(id, cfo_res, token);
+                    return true;
+                }
+                case "scope":
+                {
+                    SendResponse(id,
+                    Result.Exception(new ArgumentException(
+                        $"Runtime.callFunctionOn not supported with scope ({objectId}).")),
+                        token);
+                    return true;
+                }
+                default:
+                    return false;
+            }
+            Result res = await SendMonoCommand(id, MonoCommands.CallFunctionOn(RuntimeId, args), token);
+            if (res.IsErr)
+            {
+                SendResponse(id, res, token);
+                return true;
+            }
+            if (res.Value?["result"]?["value"]?["type"] == null) //it means that is not a buffer returned from the debugger-agent
+            {
+                byte[] newBytes = Convert.FromBase64String(res.Value?["result"]?["value"]?["value"]?.Value<string>());
+                var retDebuggerCmdReader = new MonoBinaryReader(newBytes);
+                retDebuggerCmdReader.ReadByte(); //number of objects returned.
+                var obj = await context.SdbAgent.CreateJObjectForVariableValue(retDebuggerCmdReader, "ret", false, -1, false, token);
+                /*JTokenType? res_value_type = res.Value?["result"]?["value"]?.Type;*/
+                res = Result.OkFromObject(new { result = obj["value"]});
+                SendResponse(id, res, token);
+                return true;
+            }
+            res = Result.OkFromObject(new { result = res.Value?["result"]?["value"]});
+            SendResponse(id, res, token);
+            return true;
+        }
 
         private async Task<bool> OnSetVariableValue(MessageId id, int scopeId, string varName, JToken varValue, CancellationToken token)
         {
-            ExecutionContext ctx = GetContext(id);
-            Frame scope = ctx.CallStack.FirstOrDefault(s => s.Id == scopeId);
+            ExecutionContext context = GetContext(id);
+            Frame scope = context.CallStack.FirstOrDefault(s => s.Id == scopeId);
             if (scope == null)
                 return false;
-            var varIds = scope.Method.GetLiveVarsAt(scope.Location.CliLocation.Offset);
+            var varIds = scope.Method.Info.GetLiveVarsAt(scope.Location.IlLocation.Offset);
             if (varIds == null)
                 return false;
             var varToSetValue = varIds.FirstOrDefault(v => v.Name == varName);
             if (varToSetValue == null)
                 return false;
-            Result res = await SendMonoCommand(id, MonoCommands.SetVariableValue(scopeId, varToSetValue.Index, varName, varValue["value"].Value<string>()), token);
-            if (res.IsOk)
+            var res = await context.SdbAgent.SetVariableValue(context.ThreadId, scopeId, varToSetValue.Index, varValue["value"].Value<string>(), token);
+            if (res)
                 SendResponse(id, Result.Ok(new JObject()), token);
             else
                 SendResponse(id, Result.Err($"Unable to set '{varValue["value"].Value<string>()}' to variable '{varName}'"), token);
             return true;
         }
 
-        private async Task<Result> RuntimeGetProperties(MessageId id, DotnetObjectId objectId, JToken args, CancellationToken token)
+        internal async Task<JToken> RuntimeGetPropertiesInternal(SessionId id, DotnetObjectId objectId, JToken args, CancellationToken token, bool sortByAccessLevel = false)
         {
-            if (objectId.Scheme == "scope")
+            var context = GetContext(id);
+            var accessorPropertiesOnly = false;
+            GetObjectCommandOptions objectValuesOpt = GetObjectCommandOptions.WithProperties;
+            if (args != null)
             {
-                return await GetScopeProperties(id, int.Parse(objectId.Value), token);
-            }
-
-            Result res = await SendMonoCommand(id, MonoCommands.GetDetails(objectId, args), token);
-            if (res.IsErr)
-                return res;
-
-            if (objectId.Scheme == "cfo_res")
-            {
-                // Runtime.callFunctionOn result object
-                string value_json_str = res.Value["result"]?["value"]?["__value_as_json_string__"]?.Value<string>();
-                if (value_json_str != null)
+                if (args["accessorPropertiesOnly"] != null && args["accessorPropertiesOnly"].Value<bool>())
                 {
-                    res = Result.OkFromObject(new
+                    objectValuesOpt |= GetObjectCommandOptions.AccessorPropertiesOnly;
+                    accessorPropertiesOnly = true;
+                }
+                if (args["ownProperties"] != null && args["ownProperties"].Value<bool>())
+                {
+                    objectValuesOpt |= GetObjectCommandOptions.OwnProperties;
+                }
+            }
+            try {
+                switch (objectId.Scheme)
+                {
+                    case "scope":
                     {
-                        result = JArray.Parse(value_json_str)
-                    });
-                }
-                else
-                {
-                    res = Result.OkFromObject(new { result = new { } });
-                }
-            }
-            else
-            {
-                res = Result.Ok(JObject.FromObject(new { result = res.Value["result"]["value"] }));
-            }
+                        var resScope = await GetScopeProperties(id, objectId.Value, token);
+                        if (sortByAccessLevel)
+                            return resScope.Value;
+                        return resScope.Value?["result"];
+                    }
+                    case "valuetype":
+                    {
+                        var resValType = await context.SdbAgent.GetValueTypeValues(objectId.Value, accessorPropertiesOnly, token);
+                        return sortByAccessLevel ? JObject.FromObject(new { result = resValType }) : resValType;
+                    }
+                    case "array":
+                    {
+                        var resArr = await context.SdbAgent.GetArrayValues(objectId.Value, token);
+                        return sortByAccessLevel ? JObject.FromObject(new { result = resArr }) : resArr;
+                    }
+                    case "methodId":
+                    {
+                        var resMethod = await context.SdbAgent.InvokeMethodInObject(objectId.Value, objectId.SubValue, null, token);
+                        return sortByAccessLevel ? JObject.FromObject(new { result = new JArray(resMethod) }) : new JArray(resMethod);
+                    }
+                    case "object":
+                    {
+                        var resObj = (await context.SdbAgent.GetObjectValues(objectId.Value, objectValuesOpt, token, sortByAccessLevel));
+                        return sortByAccessLevel ? resObj[0] : resObj;
+                    }
+                    case "pointer":
+                    {
+                        var resPointer = new JArray { await context.SdbAgent.GetPointerContent(objectId.Value, token) };
+                        return sortByAccessLevel ? JObject.FromObject(new { result = resPointer }) : resPointer;
+                    }
+                    case "cfo_res":
+                    {
+                        Result res = await SendMonoCommand(id, MonoCommands.GetDetails(RuntimeId, objectId.Value, args), token);
+                        string value_json_str = res.Value["result"]?["value"]?["__value_as_json_string__"]?.Value<string>();
+                        return value_json_str != null ?
+                                (sortByAccessLevel ? JObject.FromObject(new { result = JArray.Parse(value_json_str) }) : JArray.Parse(value_json_str)) :
+                                null;
+                    }
+                    default:
+                        return null;
 
-            return res;
+                }
+            }
+            catch (Exception) {
+                return null;
+            }
         }
 
-        private async Task<bool> EvaluateCondition(SessionId sessionId, ExecutionContext context, JObject mono_frame, Breakpoint bp, CancellationToken token)
+        private async Task<bool> EvaluateCondition(SessionId sessionId, ExecutionContext context, Frame mono_frame, Breakpoint bp, CancellationToken token)
         {
             if (string.IsNullOrEmpty(bp?.Condition) || mono_frame == null)
                 return true;
@@ -551,8 +738,7 @@ namespace Microsoft.WebAssembly.Diagnostics
             if (bp.ConditionAlreadyEvaluatedWithError)
                 return false;
             try {
-                var resolver = new MemberReferenceResolver(this, context, sessionId, mono_frame["frame_id"].Value<int>(), logger);
-
+                var resolver = new MemberReferenceResolver(this, context, sessionId, mono_frame.Id, logger);
                 JObject retValue = await resolver.Resolve(condition, token);
                 if (retValue == null)
                     retValue = await EvaluateExpression.CompileAndRunTheExpression(condition, resolver, token);
@@ -574,171 +760,140 @@ namespace Microsoft.WebAssembly.Diagnostics
             return false;
         }
 
-        private async Task<bool> OnPause(SessionId sessionId, JObject args, CancellationToken token)
+        private async Task<bool> ProcessEnC(SessionId sessionId, ExecutionContext context, MonoBinaryReader retDebuggerCmdReader, CancellationToken token)
         {
-            //FIXME we should send release objects every now and then? Or intercept those we inject and deal in the runtime
-            Result res = await SendMonoCommand(sessionId, MonoCommands.GetCallStack(), token);
-            IEnumerable<JObject> orig_callframes = args?["callFrames"]?.Values<JObject>();
-            ExecutionContext context = GetContext(sessionId);
-            JObject data = null;
-            string reason = "other";//other means breakpoint
+            int moduleId = retDebuggerCmdReader.ReadInt32();
+            int meta_size = retDebuggerCmdReader.ReadInt32();
+            byte[] meta_buf = retDebuggerCmdReader.ReadBytes(meta_size);
+            int pdb_size = retDebuggerCmdReader.ReadInt32();
+            byte[] pdb_buf = retDebuggerCmdReader.ReadBytes(pdb_size);
 
-            if (res.IsErr)
+            var assemblyName = await context.SdbAgent.GetAssemblyNameFromModule(moduleId, token);
+            DebugStore store = await LoadStore(sessionId, token);
+            AssemblyInfo asm = store.GetAssemblyByName(assemblyName);
+            foreach (var method in store.EnC(asm, meta_buf, pdb_buf))
+                await ResetBreakpoint(sessionId, method, token);
+            return true;
+        }
+
+        private async Task<bool> SendBreakpointsOfMethodUpdated(SessionId sessionId, ExecutionContext context, MonoBinaryReader retDebuggerCmdReader, CancellationToken token)
+        {
+            var methodId = retDebuggerCmdReader.ReadInt32();
+            var method = await context.SdbAgent.GetMethodInfo(methodId, token);
+            if (method == null)
             {
-                //Give up and send the original call stack
-                return false;
+                return true;
             }
-
-            //step one, figure out where did we hit
-            JToken res_value = res.Value?["result"]?["value"];
-            if (res_value == null || res_value is JValue)
+            foreach (var req in context.BreakpointRequests.Values)
             {
-                //Give up and send the original call stack
-                return false;
-            }
-
-            Log("verbose", $"call stack (err is {res.Error} value is:\n{res.Value}");
-            int? bp_id = res_value?["breakpoint_id"]?.Value<int>();
-            Log("verbose", $"We just hit bp {bp_id}");
-            if (!bp_id.HasValue)
-            {
-                //Give up and send the original call stack
-                return false;
-            }
-
-            Breakpoint bp = context.BreakpointRequests.Values.SelectMany(v => v.Locations).FirstOrDefault(b => b.RemoteId == bp_id.Value);
-
-            var callFrames = new List<object>();
-            foreach (JObject frame in orig_callframes)
-            {
-                string function_name = frame["functionName"]?.Value<string>();
-                string url = frame["url"]?.Value<string>();
-                if ("mono_wasm_fire_bp" == function_name || "_mono_wasm_fire_bp" == function_name ||
-                    "_mono_wasm_fire_exception" == function_name)
+                if (req.Method != null && req.Method.Assembly.Id == method.Info.Assembly.Id && req.Method.Token == method.Info.Token)
                 {
-                    if ("_mono_wasm_fire_exception" == function_name)
+                    await SetBreakpoint(sessionId, context.store, req, true, token);
+                }
+            }
+            return true;
+        }
+
+        private async Task<bool> SendCallStack(SessionId sessionId, ExecutionContext context, string reason, int thread_id, Breakpoint bp, JObject data, IEnumerable<JObject> orig_callframes, EventKind event_kind, CancellationToken token)
+        {
+            var callFrames = new List<object>();
+            var frames = new List<Frame>();
+            using var commandParamsWriter = new MonoBinaryWriter();
+            commandParamsWriter.Write(thread_id);
+            commandParamsWriter.Write(0);
+            commandParamsWriter.Write(-1);
+            using var retDebuggerCmdReader = await context.SdbAgent.SendDebuggerAgentCommand(CmdThread.GetFrameInfo, commandParamsWriter, token);
+            var frame_count = retDebuggerCmdReader.ReadInt32();
+            //Console.WriteLine("frame_count - " + frame_count);
+            for (int j = 0; j < frame_count; j++) {
+                var frame_id = retDebuggerCmdReader.ReadInt32();
+                var methodId = retDebuggerCmdReader.ReadInt32();
+                var il_pos = retDebuggerCmdReader.ReadInt32();
+                var flags = retDebuggerCmdReader.ReadByte();
+                DebugStore store = await LoadStore(sessionId, token);
+                var method = await context.SdbAgent.GetMethodInfo(methodId, token);
+
+                if (context.IsSkippingHiddenMethod == true)
+                {
+                    context.IsSkippingHiddenMethod = false;
+                    if (event_kind != EventKind.UserBreak)
                     {
-                        Result exception_obj_id = await SendMonoCommand(sessionId, MonoCommands.GetExceptionObject(), token);
-                        JToken res_val = exception_obj_id.Value?["result"]?["value"];
-                        var exception_dotnet_obj_id = new DotnetObjectId("object", res_val?["exception_id"]?.Value<string>());
-                        data = JObject.FromObject(new
-                        {
-                            type = "object",
-                            subtype = "error",
-                            className = res_val?["class_name"]?.Value<string>(),
-                            uncaught = res_val?["uncaught"]?.Value<bool>(),
-                            description = res_val?["message"]?.Value<string>() + "\n",
-                            objectId = exception_dotnet_obj_id.ToString()
-                        });
-                        reason = "exception";
-                    }
-
-                    var frames = new List<Frame>();
-                    IEnumerable<JObject> the_mono_frames = res.Value?["result"]?["value"]?["frames"]?.Values<JObject>();
-
-                    foreach (JObject mono_frame in the_mono_frames)
-                    {
-                        int frame_id = mono_frame["frame_id"].Value<int>();
-                        int il_pos = mono_frame["il_pos"].Value<int>();
-                        int method_token = mono_frame["method_token"].Value<int>();
-                        string assembly_name = mono_frame["assembly_name"].Value<string>();
-
-                        // This can be different than `method.Name`, like in case of generic methods
-                        string method_name = mono_frame["method_name"]?.Value<string>();
-
-                        DebugStore store = await LoadStore(sessionId, token);
-                        AssemblyInfo asm = store.GetAssemblyByName(assembly_name);
-                        if (asm == null)
-                        {
-                            Log("debug", $"Unable to find assembly: {assembly_name}");
-                            continue;
-                        }
-
-                        MethodInfo method = asm.GetMethodByToken(method_token);
-
-                        if (method == null && !asm.HasSymbols)
-                        {
-                            try
-                            {
-                                method = await LoadSymbolsOnDemand(asm, method_token, sessionId, token);
-                            }
-                            catch (Exception e)
-                            {
-                                Log("info", $"Unable to find il offset: {il_pos} in method token: {method_token} assembly name: {assembly_name} exception: {e}");
-                                continue;
-                            }
-                        }
-
-                        if (method == null)
-                        {
-                            Log("debug", $"Unable to find il offset: {il_pos} in method token: {method_token} assembly name: {assembly_name}");
-                            continue;
-                        }
-
-                        SourceLocation location = method?.GetLocationByIl(il_pos);
-
-                        // When hitting a breakpoint on the "IncrementCount" method in the standard
-                        // Blazor project template, one of the stack frames is inside mscorlib.dll
-                        // and we get location==null for it. It will trigger a NullReferenceException
-                        // if we don't skip over that stack frame.
-                        if (location == null)
-                        {
-                            continue;
-                        }
-
-                        Log("debug", $"frame il offset: {il_pos} method token: {method_token} assembly name: {assembly_name}");
-                        Log("debug", $"\tmethod {method_name} location: {location}");
-                        frames.Add(new Frame(method, location, frame_id));
-
-                        callFrames.Add(new
-                        {
-                            functionName = method_name,
-                            callFrameId = $"dotnet:scope:{frame_id}",
-                            functionLocation = method.StartLocation.AsLocation(),
-
-                            location = location.AsLocation(),
-
-                            url = store.ToUrl(location),
-
-                            scopeChain = new[]
-                                {
-                                    new
-                                    {
-                                        type = "local",
-                                            @object = new
-                                            {
-                                                @type = "object",
-                                                    className = "Object",
-                                                    description = "Object",
-                                                    objectId = $"dotnet:scope:{frame_id}",
-                                            },
-                                            name = method_name,
-                                            startLocation = method.StartLocation.AsLocation(),
-                                            endLocation = method.EndLocation.AsLocation(),
-                                    }
-                                }
-                        });
-
-                        context.CallStack = frames;
-
-                    }
-                    if (!await EvaluateCondition(sessionId, context, the_mono_frames?.First(), bp, token))
-                    {
+                        await context.SdbAgent.Step(context.ThreadId, StepKind.Over, token);
                         await SendCommand(sessionId, "Debugger.resume", new JObject(), token);
                         return true;
                     }
                 }
-                else if (!(function_name.StartsWith("wasm-function", StringComparison.Ordinal) ||
-                        url.StartsWith("wasm://wasm/", StringComparison.Ordinal)))
-                {
-                    callFrames.Add(frame);
-                }
-            }
 
+                if (j == 0 && method?.Info.IsHiddenFromDebugger == true)
+                {
+                    if (event_kind == EventKind.Step)
+                        context.IsSkippingHiddenMethod = true;
+                    await context.SdbAgent.Step(context.ThreadId, StepKind.Out, token);
+                    await SendCommand(sessionId, "Debugger.resume", new JObject(), token);
+                    return true;
+                }
+
+                SourceLocation location = method?.Info.GetLocationByIl(il_pos);
+
+                // When hitting a breakpoint on the "IncrementCount" method in the standard
+                // Blazor project template, one of the stack frames is inside mscorlib.dll
+                // and we get location==null for it. It will trigger a NullReferenceException
+                // if we don't skip over that stack frame.
+                if (location == null)
+                {
+                    continue;
+                }
+
+                Log("debug", $"frame il offset: {il_pos} method token: {method.Info.Token} assembly name: {method.Info.Assembly.Name}");
+                Log("debug", $"\tmethod {method.Name} location: {location}");
+                frames.Add(new Frame(method, location, frame_id));
+
+                callFrames.Add(new
+                {
+                    functionName = method.Name,
+                    callFrameId = $"dotnet:scope:{frame_id}",
+                    functionLocation = method.Info.StartLocation.AsLocation(),
+
+                    location = location.AsLocation(),
+
+                    url = store.ToUrl(location),
+
+                    scopeChain = new[]
+                        {
+                            new
+                            {
+                                type = "local",
+                                    @object = new
+                                    {
+                                        @type = "object",
+                                            className = "Object",
+                                            description = "Object",
+                                            objectId = $"dotnet:scope:{frame_id}",
+                                    },
+                                    name = method.Name,
+                                    startLocation = method.Info.StartLocation.AsLocation(),
+                                    endLocation = method.Info.EndLocation.AsLocation(),
+                            }
+                        }
+                });
+
+                context.CallStack = frames;
+                context.ThreadId = thread_id;
+            }
             string[] bp_list = new string[bp == null ? 0 : 1];
             if (bp != null)
                 bp_list[0] = bp.StackId;
 
+            foreach (JObject frame in orig_callframes)
+            {
+                string function_name = frame["functionName"]?.Value<string>();
+                string url = frame["url"]?.Value<string>();
+                if (!(function_name.StartsWith("wasm-function", StringComparison.Ordinal) ||
+                        url.StartsWith("wasm://wasm/", StringComparison.Ordinal) || function_name == "_mono_wasm_fire_debugger_agent_message"))
+                {
+                    callFrames.Add(frame);
+                }
+            }
             var o = JObject.FromObject(new
             {
                 callFrames,
@@ -746,31 +901,98 @@ namespace Microsoft.WebAssembly.Diagnostics
                 data,
                 hitBreakpoints = bp_list,
             });
-
+            if (!await EvaluateCondition(sessionId, context, context.CallStack.First(), bp, token))
+            {
+                context.ClearState();
+                await SendCommand(sessionId, "Debugger.resume", new JObject(), token);
+                return true;
+            }
             SendEvent(sessionId, "Debugger.paused", o, token);
+
             return true;
         }
+        private async Task<bool> OnReceiveDebuggerAgentEvent(SessionId sessionId, JObject args, CancellationToken token)
+        {
+            Result res = await SendMonoCommand(sessionId, MonoCommands.GetDebuggerAgentBufferReceived(RuntimeId), token);
+            if (res.IsErr)
+                return false;
 
-        private async Task<MethodInfo> LoadSymbolsOnDemand(AssemblyInfo asm, int method_token, SessionId sessionId, CancellationToken token)
+            ExecutionContext context = GetContext(sessionId);
+            byte[] newBytes = Convert.FromBase64String(res.Value?["result"]?["value"]?["value"]?.Value<string>());
+            using var retDebuggerCmdReader = new MonoBinaryReader(newBytes);
+            retDebuggerCmdReader.ReadBytes(11); //skip HEADER_LEN
+            retDebuggerCmdReader.ReadByte(); //suspend_policy
+            var number_of_events = retDebuggerCmdReader.ReadInt32(); //number of events -> should be always one
+            for (int i = 0 ; i < number_of_events; i++) {
+                var event_kind = (EventKind)retDebuggerCmdReader.ReadByte(); //event kind
+                var request_id = retDebuggerCmdReader.ReadInt32(); //request id
+                if (event_kind == EventKind.Step)
+                    await context.SdbAgent.ClearSingleStep(request_id, token);
+                int thread_id = retDebuggerCmdReader.ReadInt32();
+                switch (event_kind)
+                {
+                    case EventKind.MethodUpdate:
+                    {
+                        var ret = await SendBreakpointsOfMethodUpdated(sessionId, context, retDebuggerCmdReader, token);
+                        await SendCommand(sessionId, "Debugger.resume", new JObject(), token);
+                        return ret;
+                    }
+                    case EventKind.EnC:
+                    {
+                        var ret = await ProcessEnC(sessionId, context, retDebuggerCmdReader, token);
+                        await SendCommand(sessionId, "Debugger.resume", new JObject(), token);
+                        return ret;
+                    }
+                    case EventKind.Exception:
+                    {
+                        string reason = "exception";
+                        int object_id = retDebuggerCmdReader.ReadInt32();
+                        var caught = retDebuggerCmdReader.ReadByte();
+                        var exceptionObject = await context.SdbAgent.GetObjectValues(object_id, GetObjectCommandOptions.WithProperties | GetObjectCommandOptions.OwnProperties, token);
+                        var exceptionObjectMessage = exceptionObject.FirstOrDefault(attr => attr["name"].Value<string>().Equals("_message"));
+                        var data = JObject.FromObject(new
+                        {
+                            type = "object",
+                            subtype = "error",
+                            className = await context.SdbAgent.GetClassNameFromObject(object_id, token),
+                            uncaught = caught == 0,
+                            description = exceptionObjectMessage["value"]["value"].Value<string>(),
+                            objectId = $"dotnet:object:{object_id}"
+                        });
+
+                        var ret = await SendCallStack(sessionId, context, reason, thread_id, null, data, args?["callFrames"]?.Values<JObject>(), event_kind, token);
+                        return ret;
+                    }
+                    case EventKind.UserBreak:
+                    case EventKind.Step:
+                    case EventKind.Breakpoint:
+                    {
+                        Breakpoint bp = context.BreakpointRequests.Values.SelectMany(v => v.Locations).FirstOrDefault(b => b.RemoteId == request_id);
+                        string reason = "other";//other means breakpoint
+                        int methodId = 0;
+                        if (event_kind != EventKind.UserBreak)
+                            methodId = retDebuggerCmdReader.ReadInt32();
+                        var ret = await SendCallStack(sessionId, context, reason, thread_id, bp, null, args?["callFrames"]?.Values<JObject>(), event_kind, token);
+                        return ret;
+                    }
+                }
+            }
+            return false;
+        }
+
+        internal async Task<MethodInfo> LoadSymbolsOnDemand(AssemblyInfo asm, int method_token, SessionId sessionId, CancellationToken token)
         {
             ExecutionContext context = GetContext(sessionId);
             if (urlSymbolServerList.Count == 0)
                 return null;
-            if (asm.TriedToLoadSymbolsOnDemand)
+            if (asm.TriedToLoadSymbolsOnDemand || !asm.PdbInformationAvailable)
                 return null;
             asm.TriedToLoadSymbolsOnDemand = true;
-            var peReader = asm.peReader;
-            var entries = peReader.ReadDebugDirectory();
-            var codeView = entries[0];
-            var codeViewData = peReader.ReadCodeViewDebugDirectoryData(codeView);
-            int pdbAge = codeViewData.Age;
-            var pdbGuid = codeViewData.Guid;
-            string pdbName = codeViewData.Path;
-            pdbName = Path.GetFileName(pdbName);
+            var pdbName = Path.GetFileName(asm.PdbName);
 
             foreach (string urlSymbolServer in urlSymbolServerList)
             {
-                string downloadURL = $"{urlSymbolServer}/{pdbName}/{pdbGuid.ToString("N").ToUpper() + pdbAge}/{pdbName}";
+                string downloadURL = $"{urlSymbolServer}/{pdbName}/{asm.PdbGuid.ToString("N").ToUpper() + asm.PdbAge}/{pdbName}";
 
                 try
                 {
@@ -810,6 +1032,7 @@ namespace Microsoft.WebAssembly.Diagnostics
                 {
                     context.BreakpointRequests[kvp.Key] = kvp.Value.Clone();
                 }
+                context.PauseOnExceptions = previousContext.PauseOnExceptions;
             }
 
             if (await IsRuntimeAlreadyReadyAlready(sessionId, token))
@@ -818,42 +1041,38 @@ namespace Microsoft.WebAssembly.Diagnostics
 
         private async Task OnResume(MessageId msg_id, CancellationToken token)
         {
-            ExecutionContext ctx = GetContext(msg_id);
-            if (ctx.CallStack != null)
+            ExecutionContext context = GetContext(msg_id);
+            if (context.CallStack != null)
             {
                 // Stopped on managed code
-                await SendMonoCommand(msg_id, MonoCommands.Resume(), token);
+                await SendMonoCommand(msg_id, MonoCommands.Resume(RuntimeId), token);
             }
 
             //discard managed frames
             GetContext(msg_id).ClearState();
         }
 
-        private async Task<bool> Step(MessageId msg_id, StepKind kind, CancellationToken token)
+        private async Task<bool> Step(MessageId msgId, StepKind kind, CancellationToken token)
         {
-            ExecutionContext context = GetContext(msg_id);
+            ExecutionContext context = GetContext(msgId);
             if (context.CallStack == null)
                 return false;
 
             if (context.CallStack.Count <= 1 && kind == StepKind.Out)
                 return false;
 
-            Result res = await SendMonoCommand(msg_id, MonoCommands.StartSingleStepping(kind), token);
-
-            int? ret_code = res.Value?["result"]?["value"]?.Value<int>();
-
-            if (ret_code.HasValue && ret_code.Value == 0)
-            {
+            var step = await context.SdbAgent.Step(context.ThreadId, kind, token);
+            if (step == false) {
                 context.ClearState();
-                await SendCommand(msg_id, "Debugger.stepOut", new JObject(), token);
+                await SendCommand(msgId, "Debugger.stepOut", new JObject(), token);
                 return false;
             }
 
-            SendResponse(msg_id, Result.Ok(new JObject()), token);
+            SendResponse(msgId, Result.Ok(new JObject()), token);
 
             context.ClearState();
 
-            await SendCommand(msg_id, "Debugger.resume", new JObject(), token);
+            await SendCommand(msgId, "Debugger.resume", new JObject(), token);
             return true;
         }
 
@@ -887,7 +1106,7 @@ namespace Microsoft.WebAssembly.Diagnostics
                 var store = await LoadStore(sessionId, token);
                 var assembly_name = eventArgs?["assembly_name"]?.Value<string>();
 
-                if (store.GetAssemblyByUnqualifiedName(assembly_name) != null)
+                if (store.GetAssemblyByName(assembly_name) != null)
                 {
                     Log("debug", $"Got AssemblyLoaded event for {assembly_name}, but skipping it as it has already been loaded.");
                     return true;
@@ -906,7 +1125,7 @@ namespace Microsoft.WebAssembly.Diagnostics
                 var pdb_data = string.IsNullOrEmpty(pdb_b64) ? null : Convert.FromBase64String(pdb_b64);
 
                 var context = GetContext(sessionId);
-                foreach (var source in store.Add(sessionId, assembly_data, pdb_data))
+                foreach (var source in store.Add(sessionId, assembly_name, assembly_data, pdb_data, token))
                 {
                     await OnSourceFileAdded(sessionId, source, context, token);
                 }
@@ -920,7 +1139,7 @@ namespace Microsoft.WebAssembly.Diagnostics
             }
         }
 
-        private async Task<bool> OnEvaluateOnCallFrame(MessageId msg_id, int scope_id, string expression, CancellationToken token)
+        private async Task<bool> OnEvaluateOnCallFrame(MessageId msg_id, int scopeId, string expression, CancellationToken token)
         {
             try
             {
@@ -928,7 +1147,7 @@ namespace Microsoft.WebAssembly.Diagnostics
                 if (context.CallStack == null)
                     return false;
 
-                var resolver = new MemberReferenceResolver(this, context, msg_id, scope_id, logger);
+                var resolver = new MemberReferenceResolver(this, context, msg_id, scopeId, logger);
 
                 JObject retValue = await resolver.Resolve(expression, token);
                 if (retValue == null)
@@ -961,34 +1180,31 @@ namespace Microsoft.WebAssembly.Diagnostics
             return true;
         }
 
-        internal async Task<Result> GetScopeProperties(SessionId msg_id, int scope_id, CancellationToken token)
+        internal async Task<Result> GetScopeProperties(SessionId msg_id, int scopeId, CancellationToken token)
         {
             try
             {
-                ExecutionContext ctx = GetContext(msg_id);
-                Frame scope = ctx.CallStack.FirstOrDefault(s => s.Id == scope_id);
+                ExecutionContext context = GetContext(msg_id);
+                Frame scope = context.CallStack.FirstOrDefault(s => s.Id == scopeId);
                 if (scope == null)
-                    return Result.Err(JObject.FromObject(new { message = $"Could not find scope with id #{scope_id}" }));
+                    return Result.Err(JObject.FromObject(new { message = $"Could not find scope with id #{scopeId}" }));
 
-                VarInfo[] var_ids = scope.Method.GetLiveVarsAt(scope.Location.CliLocation.Offset);
-                Result res = await SendMonoCommand(msg_id, MonoCommands.GetScopeVariables(scope.Id, var_ids), token);
+                VarInfo[] varIds = scope.Method.Info.GetLiveVarsAt(scope.Location.IlLocation.Offset);
 
-                //if we fail we just buble that to the IDE (and let it panic over it)
-                if (res.IsErr)
-                    return res;
-
-                JObject[] values = res.Value?["result"]?["value"]?.Values<JObject>().ToArray();
-
-                if (values == null || values.Length == 0)
-                    return Result.OkFromObject(new { result = Array.Empty<object>() });
-
-                PerScopeCache frameCache = ctx.GetCacheForScope(scope_id);
-                foreach (JObject value in values)
+                var values = await context.SdbAgent.StackFrameGetValues(scope.Method, context.ThreadId, scopeId, varIds, token);
+                if (values != null)
                 {
-                    frameCache.Locals[value["name"]?.Value<string>()] = value;
-                }
+                    if (values == null || values.Count == 0)
+                        return Result.OkFromObject(new { result = Array.Empty<object>() });
 
-                return Result.OkFromObject(new { result = values });
+                    PerScopeCache frameCache = context.GetCacheForScope(scopeId);
+                    foreach (JObject value in values)
+                    {
+                        frameCache.Locals[value["name"]?.Value<string>()] = value;
+                    }
+                    return Result.OkFromObject(new { result = values });
+                }
+                return Result.OkFromObject(new { result = Array.Empty<object>() });
             }
             catch (Exception exception)
             {
@@ -999,21 +1215,22 @@ namespace Microsoft.WebAssembly.Diagnostics
 
         private async Task<Breakpoint> SetMonoBreakpoint(SessionId sessionId, string reqId, SourceLocation location, string condition, CancellationToken token)
         {
+            var context = GetContext(sessionId);
             var bp = new Breakpoint(reqId, location, condition, BreakpointState.Pending);
-            string asm_name = bp.Location.CliLocation.Method.Assembly.Name;
-            int method_token = bp.Location.CliLocation.Method.Token;
-            int il_offset = bp.Location.CliLocation.Offset;
+            string asm_name = bp.Location.IlLocation.Method.Assembly.Name;
+            int method_token = bp.Location.IlLocation.Method.Token;
+            int il_offset = bp.Location.IlLocation.Offset;
 
-            Result res = await SendMonoCommand(sessionId, MonoCommands.SetBreakpoint(asm_name, method_token, il_offset), token);
-            int? ret_code = res.Value?["result"]?["value"]?.Value<int>();
+            var assembly_id = await context.SdbAgent.GetAssemblyId(asm_name, token);
+            var methodId = await context.SdbAgent.GetMethodIdByToken(assembly_id, method_token, token);
+            var breakpoint_id = await context.SdbAgent.SetBreakpoint(methodId, il_offset, token);
 
-            if (ret_code.HasValue)
+            if (breakpoint_id > 0)
             {
-                bp.RemoteId = ret_code.Value;
+                bp.RemoteId = breakpoint_id;
                 bp.State = BreakpointState.Active;
                 //Log ("verbose", $"BP local id {bp.LocalId} enabled with remote id {bp.RemoteId}");
             }
-
             return bp;
         }
 
@@ -1021,7 +1238,6 @@ namespace Microsoft.WebAssembly.Diagnostics
         {
             JObject scriptSource = JObject.FromObject(source.ToScriptSource(context.Id, context.AuxData));
             Log("debug", $"sending {source.Url} {context.Id} {sessionId.sessionId}");
-
             SendEvent(sessionId, "Debugger.scriptParsed", scriptSource, token);
 
             foreach (var req in context.BreakpointRequests.Values)
@@ -1033,11 +1249,11 @@ namespace Microsoft.WebAssembly.Diagnostics
             }
         }
 
-        private async Task<DebugStore> LoadStore(SessionId sessionId, CancellationToken token)
+        internal async Task<DebugStore> LoadStore(SessionId sessionId, CancellationToken token)
         {
             ExecutionContext context = GetContext(sessionId);
 
-            if (Interlocked.CompareExchange(ref context.store, new DebugStore(logger), null) != null)
+            if (Interlocked.CompareExchange(ref context.store, new DebugStore(this, logger), null) != null)
                 return await context.Source.Task;
 
             try
@@ -1046,7 +1262,7 @@ namespace Microsoft.WebAssembly.Diagnostics
 
                 if (loaded_files == null)
                 {
-                    Result loaded = await SendMonoCommand(sessionId, MonoCommands.GetLoadedFiles(), token);
+                    Result loaded = await SendMonoCommand(sessionId, MonoCommands.GetLoadedFiles(RuntimeId), token);
                     loaded_files = loaded.Value?["result"]?["value"]?.ToObject<string[]>();
                 }
 
@@ -1072,20 +1288,38 @@ namespace Microsoft.WebAssembly.Diagnostics
             if (Interlocked.CompareExchange(ref context.ready, new TaskCompletionSource<DebugStore>(), null) != null)
                 return await context.ready.Task;
 
-            Result clear_result = await SendMonoCommand(sessionId, MonoCommands.ClearAllBreakpoints(), token);
-            if (clear_result.IsErr)
-            {
-                Log("verbose", $"Failed to clear breakpoints due to {clear_result}");
-            }
+            await context.SdbAgent.SendDebuggerAgentCommand(CmdEventRequest.ClearAllBreakpoints, null, token);
+
+            if (context.PauseOnExceptions != PauseOnExceptionsKind.None && context.PauseOnExceptions != PauseOnExceptionsKind.Unset)
+                await context.SdbAgent.EnableExceptions(context.PauseOnExceptions, token);
+
+            await context.SdbAgent.SetProtocolVersion(token);
+            await context.SdbAgent.EnableReceiveRequests(EventKind.UserBreak, token);
+            await context.SdbAgent.EnableReceiveRequests(EventKind.EnC, token);
+            await context.SdbAgent.EnableReceiveRequests(EventKind.MethodUpdate, token);
 
             DebugStore store = await LoadStore(sessionId, token);
-
             context.ready.SetResult(store);
             SendEvent(sessionId, "Mono.runtimeReady", new JObject(), token);
+            context.SdbAgent.ResetStore(store);
             return store;
         }
 
-        private async Task RemoveBreakpoint(MessageId msg_id, JObject args, CancellationToken token)
+        private async Task ResetBreakpoint(SessionId msg_id, MethodInfo method, CancellationToken token)
+        {
+            ExecutionContext context = GetContext(msg_id);
+            foreach (var req in context.BreakpointRequests.Values)
+            {
+                if (req.Method != null)
+                {
+                    if (req.Method.Assembly.Id == method.Assembly.Id && req.Method.Token == method.Token) {
+                        await RemoveBreakpoint(msg_id, JObject.FromObject(new {breakpointId = req.Id}), true, token);
+                    }
+                }
+            }
+        }
+
+        private async Task RemoveBreakpoint(SessionId msg_id, JObject args, bool isEnCReset, CancellationToken token)
         {
             string bpid = args?["breakpointId"]?.Value<string>();
 
@@ -1095,16 +1329,20 @@ namespace Microsoft.WebAssembly.Diagnostics
 
             foreach (Breakpoint bp in breakpointRequest.Locations)
             {
-                Result res = await SendMonoCommand(msg_id, MonoCommands.RemoveBreakpoint(bp.RemoteId), token);
-                int? ret_code = res.Value?["result"]?["value"]?.Value<int>();
-
-                if (ret_code.HasValue)
+                var breakpoint_removed = await context.SdbAgent.RemoveBreakpoint(bp.RemoteId, token);
+                if (breakpoint_removed)
                 {
                     bp.RemoteId = -1;
-                    bp.State = BreakpointState.Disabled;
+                    if (isEnCReset)
+                        bp.State = BreakpointState.Pending;
+                    else
+                        bp.State = BreakpointState.Disabled;
                 }
             }
-            context.BreakpointRequests.Remove(bpid);
+            if (!isEnCReset)
+                context.BreakpointRequests.Remove(bpid);
+            else
+                breakpointRequest.Locations = new List<Breakpoint>();
         }
 
         private async Task SetBreakpoint(SessionId sessionId, DebugStore store, BreakpointRequest req, bool sendResolvedEvent, CancellationToken token)
@@ -1132,6 +1370,10 @@ namespace Microsoft.WebAssembly.Diagnostics
             foreach (IGrouping<SourceId, SourceLocation> sourceId in locations)
             {
                 SourceLocation loc = sourceId.First();
+                req.Method = loc.IlLocation.Method;
+                if (req.Method.IsHiddenFromDebugger)
+                    continue;
+
                 Breakpoint bp = await SetMonoBreakpoint(sessionId, req.Id, loc, req.Condition, token);
 
                 // If we didn't successfully enable the breakpoint
@@ -1214,10 +1456,23 @@ namespace Microsoft.WebAssembly.Diagnostics
             // see https://github.com/mono/mono/issues/19549 for background
             if (sessions.Add(sessionId))
             {
+                string checkUncaughtExceptions = string.Empty;
+                string checkCaughtExceptions = string.Empty;
+
+                //we only need this check if it's a non-vs debugging
+                if (sessionId == SessionId.Null)
+                {
+                    if (!contexts.TryGetValue(sessionId, out ExecutionContext context) || context.PauseOnExceptions == PauseOnExceptionsKind.Unset)
+                    {
+                        checkUncaughtExceptions = $"throw \"{sPauseOnUncaught}\";";
+                        checkCaughtExceptions = $"try {{throw \"{sPauseOnCaught}\";}} catch {{}}";
+                    }
+                }
+
                 await SendMonoCommand(sessionId, new MonoCommands("globalThis.dotnetDebugger = true"), token);
                 Result res = await SendCommand(sessionId,
                     "Page.addScriptToEvaluateOnNewDocument",
-                    JObject.FromObject(new { source = "globalThis.dotnetDebugger = true; delete navigator.constructor.prototype.webdriver" }),
+                    JObject.FromObject(new { source = $"globalThis.dotnetDebugger = true; delete navigator.constructor.prototype.webdriver; {checkCaughtExceptions} {checkUncaughtExceptions}" }),
                     token);
 
                 if (sessionId != SessionId.Null && !res.IsOk)

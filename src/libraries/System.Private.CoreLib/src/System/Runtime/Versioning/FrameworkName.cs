@@ -52,22 +52,9 @@ namespace System.Runtime.Versioning
             {
                 if (_fullName == null)
                 {
-                    if (string.IsNullOrEmpty(Profile))
-                    {
-                        _fullName =
-                            Identifier +
-                            ComponentSeparator + VersionKey + KeyValueSeparator + VersionValuePrefix +
-                            Version.ToString();
-                    }
-                    else
-                    {
-                        _fullName =
-                            Identifier +
-                            ComponentSeparator + VersionKey + KeyValueSeparator + VersionValuePrefix +
-                            Version.ToString() +
-                            ComponentSeparator + ProfileKey + KeyValueSeparator +
-                            Profile;
-                    }
+                    _fullName = string.IsNullOrEmpty(Profile) ?
+                        $"{Identifier}{ComponentSeparator + VersionKey + KeyValueSeparator + VersionValuePrefix}{Version}" :
+                        $"{Identifier}{ComponentSeparator + VersionKey + KeyValueSeparator + VersionValuePrefix}{Version}{ComponentSeparator + ProfileKey + KeyValueSeparator}{Profile}";
                 }
 
                 Debug.Assert(_fullName != null);
@@ -117,7 +104,7 @@ namespace System.Runtime.Versioning
             identifier = identifier.Trim();
             if (identifier.Length == 0)
             {
-                throw new ArgumentException(SR.Format(SR.net_emptystringcall, nameof(identifier)), nameof(identifier));
+                throw new ArgumentException(SR.Argument_EmptyString, nameof(identifier));
             }
             if (version == null)
             {
@@ -141,7 +128,7 @@ namespace System.Runtime.Versioning
             }
             if (frameworkName.Length == 0)
             {
-                throw new ArgumentException(SR.Format(SR.net_emptystringcall, nameof(frameworkName)), nameof(frameworkName));
+                throw new ArgumentException(SR.Argument_EmptyString, nameof(frameworkName));
             }
 
             string[] components = frameworkName.Split(ComponentSeparator);

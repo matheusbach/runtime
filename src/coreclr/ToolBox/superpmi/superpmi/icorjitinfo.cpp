@@ -24,11 +24,11 @@ ICorJitInfo* InitICorJitInfo(JitInstance* jitInstance)
 /**********************************************************************************/
 
 // Quick check whether the method is a jit intrinsic. Returns the same value as getMethodAttribs(ftn) &
-// CORINFO_FLG_JIT_INTRINSIC, except faster.
-bool MyICJI::isJitIntrinsic(CORINFO_METHOD_HANDLE ftn)
+// CORINFO_FLG_INTRINSIC, except faster.
+bool MyICJI::isIntrinsic(CORINFO_METHOD_HANDLE ftn)
 {
-    jitInstance->mc->cr->AddCall("isJitIntrinsic");
-    return jitInstance->mc->repIsJitIntrinsic(ftn);
+    jitInstance->mc->cr->AddCall("isIntrinsic");
+    return jitInstance->mc->repIsIntrinsic(ftn);
 }
 
 // return flags (defined above, CORINFO_FLG_PUBLIC ...)
@@ -215,15 +215,6 @@ void MyICJI::expandRawHandleIntrinsic(CORINFO_RESOLVED_TOKEN* pResolvedToken, CO
     jitInstance->mc->cr->AddCall("expandRawHandleIntrinsic");
     LogError("Hit unimplemented expandRawHandleIntrinsic");
     DebugBreakorAV(129);
-}
-
-// If a method's attributes have (getMethodAttribs) CORINFO_FLG_INTRINSIC set,
-// getIntrinsicID() returns the intrinsic ID.
-CorInfoIntrinsics MyICJI::getIntrinsicID(CORINFO_METHOD_HANDLE method, bool* pMustExpand /* OUT */
-                                         )
-{
-    jitInstance->mc->cr->AddCall("getIntrinsicID");
-    return jitInstance->mc->repGetIntrinsicID(method, pMustExpand);
 }
 
 // Is the given type in System.Private.Corelib and marked with IntrinsicAttribute?
@@ -435,7 +426,7 @@ CORINFO_CLASS_HANDLE MyICJI::getTypeInstantiationArgument(CORINFO_CLASS_HANDLE c
 // If fFullInst=TRUE (regardless of fNamespace and fAssembly), include namespace and assembly for any type parameters
 // If fAssembly=TRUE, suffix with a comma and the full assembly qualification
 // return size of representation
-int MyICJI::appendClassName(__deref_inout_ecount(*pnBufLen) char16_t** ppBuf,
+int MyICJI::appendClassName(_Outptr_result_buffer_(*pnBufLen) char16_t** ppBuf,
                             int*                                    pnBufLen,
                             CORINFO_CLASS_HANDLE                    cls,
                             bool                                    fNamespace,
@@ -480,18 +471,6 @@ uint32_t MyICJI::getClassAttribs(CORINFO_CLASS_HANDLE cls)
 {
     jitInstance->mc->cr->AddCall("getClassAttribs");
     return jitInstance->mc->repGetClassAttribs(cls);
-}
-
-// Returns "TRUE" iff "cls" is a struct type such that return buffers used for returning a value
-// of this type must be stack-allocated.  This will generally be true only if the struct
-// contains GC pointers, and does not exceed some size limit.  Maintaining this as an invariant allows
-// an optimization: the JIT may assume that return buffer pointers for return types for which this predicate
-// returns TRUE are always stack allocated, and thus, that stores to the GC-pointer fields of such return
-// buffers do not require GC write barriers.
-bool MyICJI::isStructRequiringStackAllocRetBuf(CORINFO_CLASS_HANDLE cls)
-{
-    jitInstance->mc->cr->AddCall("isStructRequiringStackAllocRetBuf");
-    return jitInstance->mc->repIsStructRequiringStackAllocRetBuf(cls);
 }
 
 CORINFO_MODULE_HANDLE MyICJI::getClassModule(CORINFO_CLASS_HANDLE cls)
@@ -835,6 +814,13 @@ unsigned MyICJI::getArrayRank(CORINFO_CLASS_HANDLE cls)
     return jitInstance->mc->repGetArrayRank(cls);
 }
 
+// Get the index of runtime provided array method
+CorInfoArrayIntrinsic MyICJI::getArrayIntrinsicID(CORINFO_METHOD_HANDLE hMethod)
+{
+    jitInstance->mc->cr->AddCall("getArrayIntrinsicID");
+    return jitInstance->mc->repGetArrayIntrinsicID(hMethod);
+}
+
 // Get static field data for an array
 void* MyICJI::getArrayInitializationData(CORINFO_FIELD_HANDLE field, uint32_t size)
 {
@@ -1113,7 +1099,7 @@ HRESULT MyICJI::GetErrorHRESULT(struct _EXCEPTION_POINTERS* pExceptionPointers)
 // Fetches the message of the current exception
 // Returns the size of the message (including terminating null). This can be
 // greater than bufferLength if the buffer is insufficient.
-uint32_t MyICJI::GetErrorMessage(__inout_ecount(bufferLength) char16_t* buffer, uint32_t bufferLength)
+uint32_t MyICJI::GetErrorMessage(_Inout_updates_(bufferLength) char16_t* buffer, uint32_t bufferLength)
 {
     jitInstance->mc->cr->AddCall("GetErrorMessage");
     LogError("Hit unimplemented GetErrorMessage");
@@ -1132,12 +1118,6 @@ int MyICJI::FilterException(struct _EXCEPTION_POINTERS* pExceptionPointers)
     jitInstance->mc->cr->AddCall("FilterException");
     int result = jitInstance->mc->repFilterException(pExceptionPointers);
     return result;
-}
-
-// Cleans up internal EE tracking when an exception is caught.
-void MyICJI::HandleException(struct _EXCEPTION_POINTERS* pExceptionPointers)
-{
-    jitInstance->mc->cr->AddCall("HandleException");
 }
 
 void MyICJI::ThrowExceptionForJitResult(HRESULT result)
@@ -1234,7 +1214,7 @@ unsigned MyICJI::getMethodHash(CORINFO_METHOD_HANDLE ftn /* IN */
 // this function is for debugging only.
 size_t MyICJI::findNameOfToken(CORINFO_MODULE_HANDLE              module,        /* IN  */
                                mdToken                            metaTOK,       /* IN  */
-                               __out_ecount(FQNameCapacity) char* szFQName,      /* OUT */
+                               _Out_writes_(FQNameCapacity) char* szFQName,      /* OUT */
                                size_t                             FQNameCapacity /* IN */
                                )
 {
@@ -1290,10 +1270,13 @@ void MyICJI::getFunctionEntryPoint(CORINFO_METHOD_HANDLE ftn,     /* IN  */
 // return a directly callable address. This can be used similarly to the
 // value returned by getFunctionEntryPoint() except that it is
 // guaranteed to be multi callable entrypoint.
-void MyICJI::getFunctionFixedEntryPoint(CORINFO_METHOD_HANDLE ftn, CORINFO_CONST_LOOKUP* pResult)
+void MyICJI::getFunctionFixedEntryPoint(
+                    CORINFO_METHOD_HANDLE ftn,
+                    bool isUnsafeFunctionPointer,
+                    CORINFO_CONST_LOOKUP* pResult)
 {
     jitInstance->mc->cr->AddCall("getFunctionFixedEntryPoint");
-    jitInstance->mc->repGetFunctionFixedEntryPoint(ftn, pResult);
+    jitInstance->mc->repGetFunctionFixedEntryPoint(ftn, isUnsafeFunctionPointer, pResult);
 }
 
 // get the synchronization handle that is passed to monXstatic function
@@ -1562,6 +1545,12 @@ bool MyICJI::notifyInstructionSetUsage(CORINFO_InstructionSet instructionSet, bo
     return supported;
 }
 
+void MyICJI::updateEntryPointForTailCall(CORINFO_CONST_LOOKUP* entryPoint)
+{
+    jitInstance->mc->cr->AddCall("updateEntryPointForTailCall");
+    jitInstance->mc->repUpdateEntryPointForTailCall(entryPoint);
+}
+
 // Stuff directly on ICorJitInfo
 
 // Returns extended flags for a particular compilation instance.
@@ -1580,12 +1569,27 @@ uint32_t MyICJI::getJitFlags(CORJIT_FLAGS* jitFlags, uint32_t sizeInBytes)
     return ret;
 }
 
+bool MyICJI::doesFieldBelongToClass(CORINFO_FIELD_HANDLE fldHnd, CORINFO_CLASS_HANDLE cls)
+{
+    jitInstance->mc->cr->AddCall("doesFieldBelongToClass");
+    bool result = jitInstance->mc->repDoesFieldBelongToClass(fldHnd, cls);
+    return result;
+}
+
 // Runs the given function with the given parameter under an error trap
 // and returns true if the function completes successfully. We fake this
 // up a bit for SuperPMI and simply catch all exceptions.
 bool MyICJI::runWithErrorTrap(void (*function)(void*), void* param)
 {
     return RunWithErrorTrap(function, param);
+}
+
+// Runs the given function with the given parameter under an error trap
+// and returns true if the function completes successfully. This catches
+// all SPMI exceptions and lets others through.
+bool MyICJI::runWithSPMIErrorTrap(void (*function)(void*), void* param)
+{
+    return RunWithSPMIErrorTrap(function, param);
 }
 
 // Ideally we'd just use the copies of this in standardmacros.h
@@ -1778,7 +1782,7 @@ int MyICJI::doAssert(const char* szFile, int iLine, const char* szExpr)
     char buff[16 * 1024];
     sprintf_s(buff, sizeof(buff), "%s (%d) - %s", szFile, iLine, szExpr);
 
-    LogIssue(ISSUE_ASSERT, "%s", buff);
+    LogIssue(ISSUE_ASSERT, "#%d %s", jitInstance->mc->index, buff);
     jitInstance->mc->cr->recMessageLog(buff);
 
     // Under "/boa", ask the user if they want to attach a debugger. If they do, the debugger will be attached,

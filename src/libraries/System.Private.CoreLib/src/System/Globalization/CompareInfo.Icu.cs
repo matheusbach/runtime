@@ -14,7 +14,7 @@ namespace System.Globalization
         [NonSerialized]
         private bool _isAsciiEqualityOrdinal;
 
-        private void IcuInitSortHandle()
+        private void IcuInitSortHandle(string interopCultureName)
         {
             if (GlobalizationMode.Invariant)
             {
@@ -23,6 +23,7 @@ namespace System.Globalization
             else
             {
                 Debug.Assert(!GlobalizationMode.UseNls);
+                Debug.Assert(interopCultureName != null);
 
                 // Inline the following condition to avoid potential implementation cycles within globalization
                 //
@@ -31,7 +32,7 @@ namespace System.Globalization
                 _isAsciiEqualityOrdinal = _sortName.Length == 0 ||
                     (_sortName.Length >= 2 && _sortName[0] == 'e' && _sortName[1] == 'n' && (_sortName.Length == 2 || _sortName[2] == '-'));
 
-                _sortHandle = SortHandleCache.GetCachedSortHandle(_sortName);
+                _sortHandle = SortHandleCache.GetCachedSortHandle(interopCultureName);
             }
         }
 
@@ -722,7 +723,9 @@ namespace System.Globalization
 
             // according to ICU User Guide the performance of ucol_getSortKey is worse when it is called with null output buffer
             // the solution is to try to fill the sort key in a temporary buffer of size equal 4 x string length
-            // 1MB is the biggest array that can be rented from ArrayPool.Shared without memory allocation
+            // (The ArrayPool used to have a limit on the length of buffers it would cache; this code was avoiding
+            // exceeding that limit to avoid a per-operation allocation, and the performance implications here
+            // were not re-evaluated when the limit was lifted.)
             int sortKeyLength = (source.Length > 1024 * 1024 / 4) ? 0 : 4 * source.Length;
 
             byte[]? borrowedArray = null;

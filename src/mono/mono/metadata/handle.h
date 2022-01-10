@@ -124,9 +124,9 @@ typedef void (*GcScanFunc) (gpointer*, gpointer);
 #endif
 
 #ifndef MONO_HANDLE_TRACK_OWNER
-MonoRawHandle mono_handle_new (MonoObject *object, MonoThreadInfo *info);
+MONO_COMPONENT_API MonoRawHandle mono_handle_new (MonoObject *object, MonoThreadInfo *info);
 #else
-MonoRawHandle mono_handle_new (MonoObject *object, MonoThreadInfo *info, const char* owner);
+MONO_COMPONENT_API MonoRawHandle mono_handle_new (MonoObject *object, MonoThreadInfo *info, const char* owner);
 #endif
 
 void mono_handle_stack_scan (HandleStack *stack, GcScanFunc func, gpointer gc_data, gboolean precise, gboolean check);
@@ -134,7 +134,7 @@ gboolean mono_handle_stack_is_empty (HandleStack *stack);
 HandleStack* mono_handle_stack_alloc (void);
 void mono_handle_stack_free (HandleStack *handlestack);
 MonoRawHandle mono_stack_mark_pop_value (MonoThreadInfo *info, HandleStackMark *stackmark, MonoRawHandle value);
-MonoThreadInfo* mono_stack_mark_record_size (MonoThreadInfo *info, HandleStackMark *stackmark, const char *func_name);
+MONO_COMPONENT_API MonoThreadInfo* mono_stack_mark_record_size (MonoThreadInfo *info, HandleStackMark *stackmark, const char *func_name);
 void mono_handle_stack_free_domain (HandleStack *stack, MonoDomain *domain);
 
 #ifdef MONO_HANDLE_TRACK_SP
@@ -607,6 +607,13 @@ mono_handle_unsafe_field_addr (MonoObjectHandle h, MonoClassField *field)
 {
 	return MONO_HANDLE_SUPPRESS (((gchar *)MONO_HANDLE_RAW (h)) + field->offset);
 }
+
+/* Matches ObjectHandleOnStack in managed code */
+typedef MonoObject **MonoObjectHandleOnStack;
+
+#define HANDLE_ON_STACK_SET(handle, obj) do { \
+	*(handle) = (MonoObject*)obj; \
+	} while (0)
 
 //FIXME this should go somewhere else
 MonoStringHandle mono_string_new_handle (const char *data, MonoError *error);

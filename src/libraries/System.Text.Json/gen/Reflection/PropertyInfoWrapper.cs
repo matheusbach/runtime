@@ -6,7 +6,7 @@ using System.Globalization;
 using System.Reflection;
 using Microsoft.CodeAnalysis;
 
-namespace System.Text.Json.SourceGeneration.Reflection
+namespace System.Text.Json.Reflection
 {
     internal class PropertyInfoWrapper : PropertyInfo
     {
@@ -92,5 +92,7 @@ namespace System.Text.Json.SourceGeneration.Reflection
         {
             throw new NotSupportedException();
         }
+
+        public Location? Location => _property.Locations.Length > 0 ? _property.Locations[0] : null;
     }
 }

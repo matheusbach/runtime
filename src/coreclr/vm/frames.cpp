@@ -41,7 +41,6 @@
 
 #define CHECK_APP_DOMAIN    0
 
-#if !defined(CROSSGEN_COMPILE)
 //-----------------------------------------------------------------------
 #if _DEBUG
 //-----------------------------------------------------------------------
@@ -457,7 +456,7 @@ VOID Frame::Pop(Thread *pThread)
     m_Next = NULL;
 }
 
-#if defined(TARGET_UNIX) && !defined(DACCESS_COMPILE) && !defined(CROSSGEN_COMPILE)
+#if defined(TARGET_UNIX) && !defined(DACCESS_COMPILE)
 void Frame::PopIfChained()
 {
     CONTRACTL
@@ -476,7 +475,7 @@ void Frame::PopIfChained()
         Pop();
     }
 }
-#endif // TARGET_UNIX && !DACCESS_COMPILE && !CROSSGEN_COMPILE
+#endif // TARGET_UNIX && !DACCESS_COMPILE
 
 //-----------------------------------------------------------------------
 #endif // #ifndef DACCESS_COMPILE
@@ -624,7 +623,7 @@ static PTR_BYTE FindGCRefMap(PTR_Module pZapModule, TADDR ptr)
 {
     LIMITED_METHOD_DAC_CONTRACT;
 
-    PEImageLayout *pNativeImage = pZapModule->GetNativeOrReadyToRunImage();
+    PEImageLayout *pNativeImage = pZapModule->GetReadyToRunImage();
 
     RVA rva = pNativeImage->GetDataRva(ptr);
 
@@ -1269,6 +1268,10 @@ void TransitionFrame::PromoteCallerStack(promote_func* fn, ScanContext* sc)
         pFunction->GetSig(&pSig, &cbSigSize);
 
         MetaSig msig(pSig, cbSigSize, pFunction->GetModule(), &typeContext);
+
+        bool fCtorOfVariableSizedObject = msig.HasThis() && (pFunction->GetMethodTable() == g_pStringClass) && pFunction->IsCtor();
+        if (fCtorOfVariableSizedObject)
+            msig.ClearHasThis();
 
         if (pFunction->RequiresInstArg() && !SuppressParamTypeArg())
             msig.SetHasParamTypeArg();
@@ -1977,7 +1980,6 @@ PCODE UnmanagedToManagedFrame::GetReturnAddress()
         return pRetAddr;
     }
 }
-#endif // !CROSSGEN_COMPILE
 
 #ifndef DACCESS_COMPILE
 //=================================================================================
@@ -2102,6 +2104,12 @@ void ComputeCallRefMap(MethodDesc* pMD,
     DWORD cbSigSize;
     pMD->GetSig(&pSig, &cbSigSize);
     MetaSig msig(pSig, cbSigSize, pMD->GetModule(), &typeContext);
+
+    bool fCtorOfVariableSizedObject = msig.HasThis() && (pMD->GetMethodTable() == g_pStringClass) && pMD->IsCtor();
+    if (fCtorOfVariableSizedObject)
+    {
+        msig.ClearHasThis();
+    }
 
     //
     // Shared default interface methods (i.e. virtual interface methods with an implementation) require

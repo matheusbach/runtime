@@ -384,11 +384,13 @@ bool MethodContext::Equal(MethodContext* other)
     // Compare MethodInfo's first.
     CORINFO_METHOD_INFO otherInfo;
     unsigned            otherFlags = 0;
-    other->repCompileMethod(&otherInfo, &otherFlags);
+    CORINFO_OS          otherOs    = CORINFO_WINNT;
+    other->repCompileMethod(&otherInfo, &otherFlags, &otherOs);
 
     CORINFO_METHOD_INFO ourInfo;
     unsigned            ourFlags = 0;
-    repCompileMethod(&ourInfo, &ourFlags);
+    CORINFO_OS          ourOs    = CORINFO_WINNT;
+    repCompileMethod(&ourInfo, &ourFlags, &ourOs);
 
     if (otherInfo.ILCodeSize != ourInfo.ILCodeSize)
         return false;
@@ -418,6 +420,8 @@ bool MethodContext::Equal(MethodContext* other)
     if (otherInfo.locals.cbSig != ourInfo.locals.cbSig)
         return false;
     if (otherFlags != ourFlags)
+        return false;
+    if (otherOs != ourOs)
         return false;
 
 // Now compare the other maps to "estimate" equality.
@@ -643,7 +647,7 @@ unsigned int toCorInfoSize(CorInfoType cit)
     return -1;
 }
 
-void MethodContext::recCompileMethod(CORINFO_METHOD_INFO* info, unsigned flags)
+void MethodContext::recCompileMethod(CORINFO_METHOD_INFO* info, unsigned flags, CORINFO_OS os)
 {
     if (CompileMethod == nullptr)
         CompileMethod = new LightWeightMap<DWORD, Agnostic_CompileMethod>();
@@ -662,6 +666,8 @@ void MethodContext::recCompileMethod(CORINFO_METHOD_INFO* info, unsigned flags)
     value.info.args   = SpmiRecordsHelper::StoreAgnostic_CORINFO_SIG_INFO(info->args, CompileMethod, SigInstHandleMap);
     value.info.locals = SpmiRecordsHelper::StoreAgnostic_CORINFO_SIG_INFO(info->locals, CompileMethod, SigInstHandleMap);
 
+    value.os = (DWORD)os;
+
     value.flags = (DWORD)flags;
 
     CompileMethod->Add(0, value);
@@ -669,14 +675,14 @@ void MethodContext::recCompileMethod(CORINFO_METHOD_INFO* info, unsigned flags)
 }
 void MethodContext::dmpCompileMethod(DWORD key, const Agnostic_CompileMethod& value)
 {
-    printf("CompileMethod key %u, value ftn-%016llX scp-%016llX ilo-%u ils-%u ms-%u ehc-%u opt-%u rk-%u args-%s locals-%s flg-%08X",
+    printf("CompileMethod key %u, value ftn-%016llX scp-%016llX ilo-%u ils-%u ms-%u ehc-%u opt-%u rk-%u args-%s locals-%s flg-%08X os-%u",
            key, value.info.ftn, value.info.scope, value.info.ILCode_offset, value.info.ILCodeSize, value.info.maxStack,
            value.info.EHcount, value.info.options, value.info.regionKind,
            SpmiDumpHelper::DumpAgnostic_CORINFO_SIG_INFO(value.info.args, CompileMethod, SigInstHandleMap).c_str(),
            SpmiDumpHelper::DumpAgnostic_CORINFO_SIG_INFO(value.info.locals, CompileMethod, SigInstHandleMap).c_str(),
-           value.flags);
+           value.flags, value.os);
 }
-void MethodContext::repCompileMethod(CORINFO_METHOD_INFO* info, unsigned* flags)
+void MethodContext::repCompileMethod(CORINFO_METHOD_INFO* info, unsigned* flags, CORINFO_OS* os)
 {
     AssertMapAndKeyExistNoMessage(CompileMethod, 0);
 
@@ -699,6 +705,7 @@ void MethodContext::repCompileMethod(CORINFO_METHOD_INFO* info, unsigned* flags)
     info->locals = SpmiRecordsHelper::Restore_CORINFO_SIG_INFO(value.info.locals, CompileMethod, SigInstHandleMap);
 
     *flags             = (unsigned)value.flags;
+    *os                = (CORINFO_OS)value.os;
 }
 
 void MethodContext::recGetMethodClass(CORINFO_METHOD_HANDLE methodHandle, CORINFO_CLASS_HANDLE classHandle)
@@ -771,26 +778,26 @@ DWORD MethodContext::repGetClassAttribs(CORINFO_CLASS_HANDLE classHandle)
     return value;
 }
 
-void MethodContext::recIsJitIntrinsic(CORINFO_METHOD_HANDLE ftn, bool result)
+void MethodContext::recIsIntrinsic(CORINFO_METHOD_HANDLE ftn, bool result)
 {
-    if (IsJitIntrinsic == nullptr)
-        IsJitIntrinsic = new LightWeightMap<DWORDLONG, DWORD>();
+    if (IsIntrinsic == nullptr)
+        IsIntrinsic = new LightWeightMap<DWORDLONG, DWORD>();
 
     DWORDLONG key = CastHandle(ftn);
     DWORD value = result ? 1 : 0;
-    IsJitIntrinsic->Add(key, value);
-    DEBUG_REC(dmpIsJitIntrinsic(key, value));
+    IsIntrinsic->Add(key, value);
+    DEBUG_REC(dmpIsIntrinsic(key, value));
 }
-void MethodContext::dmpIsJitIntrinsic(DWORDLONG key, DWORD value)
+void MethodContext::dmpIsIntrinsic(DWORDLONG key, DWORD value)
 {
-    printf("IsJitIntrinsic key ftn-%016llX, value res-%u", key, value);
+    printf("IsIntrinsic key ftn-%016llX, value res-%u", key, value);
 }
-bool MethodContext::repIsJitIntrinsic(CORINFO_METHOD_HANDLE ftn)
+bool MethodContext::repIsIntrinsic(CORINFO_METHOD_HANDLE ftn)
 {
     DWORDLONG key = CastHandle(ftn);
-    AssertMapAndKeyExist(IsJitIntrinsic, key, ": key %016llX", key);
-    DWORD value = IsJitIntrinsic->Get(key);
-    DEBUG_REP(dmpIsJitIntrinsic(key, value));
+    AssertMapAndKeyExist(IsIntrinsic, key, ": key %016llX", key);
+    DWORD value = IsIntrinsic->Get(key);
+    DEBUG_REP(dmpIsIntrinsic(key, value));
     return value != 0;
 }
 
@@ -1703,39 +1710,6 @@ void MethodContext::repGetCallInfoFromMethodHandle(CORINFO_METHOD_HANDLE methodH
     LogException(EXCEPTIONCODE_MC, "Didn't find key %016llX.", methodHandle);
 }
 
-void MethodContext::recGetIntrinsicID(CORINFO_METHOD_HANDLE method, bool* pMustExpand, CorInfoIntrinsics result)
-{
-    if (GetIntrinsicID == nullptr)
-        GetIntrinsicID = new LightWeightMap<DWORDLONG, DD>();
-
-    DD value;
-    value.A = (pMustExpand != nullptr) ? (DWORD)(*pMustExpand ? 1 : 0) : (DWORD)0;
-    value.B = (DWORD)result;
-
-    DWORDLONG key = CastHandle(method);
-    GetIntrinsicID->Add(key, value);
-    DEBUG_REC(dmpGetIntrinsicID(key, value));
-}
-void MethodContext::dmpGetIntrinsicID(DWORDLONG key, DD value)
-{
-    printf("GetIntrinsicID key mth-%016llX, mustExpand-%u, value intr-%u", key, value.A, value.B);
-}
-CorInfoIntrinsics MethodContext::repGetIntrinsicID(CORINFO_METHOD_HANDLE method, bool* pMustExpand)
-{
-    DWORDLONG key = CastHandle(method);
-    AssertMapAndKeyExist(GetIntrinsicID, key, ": key %016llX", key);
-
-    DD value = GetIntrinsicID->Get(key);
-    DEBUG_REP(dmpGetIntrinsicID(key, value));
-
-    if (pMustExpand != nullptr)
-    {
-        *pMustExpand = (value.A == 0) ? false : true;
-    }
-    CorInfoIntrinsics result = (CorInfoIntrinsics)value.B;
-    return result;
-}
-
 void MethodContext::recIsIntrinsicType(CORINFO_CLASS_HANDLE cls, bool result)
 {
     if (IsIntrinsicType == nullptr)
@@ -1803,29 +1777,6 @@ bool MethodContext::repIsValueClass(CORINFO_CLASS_HANDLE cls)
     AssertMapAndKeyExist(IsValueClass, key, ": key %016llX", key);
     DWORD value = IsValueClass->Get(key);
     DEBUG_REP(dmpIsValueClass(key, value));
-    return value != 0;
-}
-
-void MethodContext::recIsStructRequiringStackAllocRetBuf(CORINFO_CLASS_HANDLE cls, bool result)
-{
-    if (IsStructRequiringStackAllocRetBuf == nullptr)
-        IsStructRequiringStackAllocRetBuf = new LightWeightMap<DWORDLONG, DWORD>();
-
-    DWORDLONG key = CastHandle(cls);
-    DWORD value = result ? 1 : 0;
-    IsStructRequiringStackAllocRetBuf->Add(key, value);
-    DEBUG_REC(dmpIsStructRequiringStackAllocRetBuf(key, value));
-}
-void MethodContext::dmpIsStructRequiringStackAllocRetBuf(DWORDLONG key, DWORD value)
-{
-    printf("IsStructRequiringStackAllocRetBuf key cls-%016llX, value res-%u", key, value);
-}
-bool MethodContext::repIsStructRequiringStackAllocRetBuf(CORINFO_CLASS_HANDLE cls)
-{
-    DWORDLONG key = CastHandle(cls);
-    AssertMapAndKeyExist(IsStructRequiringStackAllocRetBuf, key, ": key %016llX", key);
-    DWORD value = IsStructRequiringStackAllocRetBuf->Get(key);
-    DEBUG_REP(dmpIsStructRequiringStackAllocRetBuf(key, value));
     return value != 0;
 }
 
@@ -4188,7 +4139,9 @@ void MethodContext::repGetEEInfo(CORINFO_EE_INFO* pEEInfoOut)
         pEEInfoOut->osPageSize                                 = (size_t)0x1000;
         pEEInfoOut->maxUncheckedOffsetForNullObject            = (size_t)((32 * 1024) - 1);
         pEEInfoOut->targetAbi                                  = CORINFO_DESKTOP_ABI;
-#ifdef TARGET_UNIX
+#ifdef TARGET_OSX
+        pEEInfoOut->osType                                     = CORINFO_MACOS;
+#elif defined(TARGET_UNIX)
         pEEInfoOut->osType                                     = CORINFO_UNIX;
 #else
         pEEInfoOut->osType                                     = CORINFO_WINNT;
@@ -4565,8 +4518,10 @@ void MethodContext::dmpGetFunctionFixedEntryPoint(DWORDLONG key, const Agnostic_
     printf("GetFunctionFixedEntryPoint key ftn-%016llX, value %s", key,
            SpmiDumpHelper::DumpAgnostic_CORINFO_CONST_LOOKUP(value).c_str());
 }
-void MethodContext::repGetFunctionFixedEntryPoint(CORINFO_METHOD_HANDLE ftn, CORINFO_CONST_LOOKUP* pResult)
+void MethodContext::repGetFunctionFixedEntryPoint(CORINFO_METHOD_HANDLE ftn, bool isUnsafeFunctionPointer, CORINFO_CONST_LOOKUP* pResult)
 {
+    // The isUnsafeFunctionPointer has no impact on the resulting value.
+    // It helps produce side-effects in the runtime only.
     DWORDLONG key = CastHandle(ftn);
     AssertMapAndKeyExist(GetFunctionFixedEntryPoint, key, ": key %016llX", key);
     Agnostic_CORINFO_CONST_LOOKUP value = GetFunctionFixedEntryPoint->Get(key);
@@ -5037,18 +4992,6 @@ int MethodContext::repFilterException(struct _EXCEPTION_POINTERS* pExceptionPoin
         int result = (int)value;
         return result;
     }
-}
-
-void MethodContext::recHandleException(struct _EXCEPTION_POINTERS* pExceptionPointers)
-{
-    if (HandleException == nullptr)
-        HandleException = new DenseLightWeightMap<DWORD>();
-
-    HandleException->Append(pExceptionPointers->ExceptionRecord->ExceptionCode);
-}
-void MethodContext::dmpHandleException(DWORD key, DWORD value)
-{
-    printf("HandleException key %u, value %u", key, value);
 }
 
 void MethodContext::recGetAddressOfPInvokeTarget(CORINFO_METHOD_HANDLE method, CORINFO_CONST_LOOKUP* pLookup)
@@ -6277,6 +6220,40 @@ DWORD MethodContext::repGetExpectedTargetArchitecture()
     return value;
 }
 
+void MethodContext::recDoesFieldBelongToClass(CORINFO_FIELD_HANDLE fld, CORINFO_CLASS_HANDLE cls, bool result)
+{
+    if (DoesFieldBelongToClass == nullptr)
+        DoesFieldBelongToClass = new LightWeightMap<DLDL, DWORD>();
+
+    DLDL key;
+    ZeroMemory(&key, sizeof(key)); // Zero key including any struct padding
+    key.A = CastHandle(fld);
+    key.B = CastHandle(cls);
+
+    DWORD value = (DWORD)result;
+    DoesFieldBelongToClass->Add(key, value);
+    DEBUG_REC(dmpDoesFieldBelongToClass(key, result));
+}
+
+void MethodContext::dmpDoesFieldBelongToClass(DLDL key, bool value)
+{
+    printf("DoesFieldBelongToClass key fld=%016llX, cls=%016llx, result=%d", key.A, key.B, value);
+}
+
+bool MethodContext::repDoesFieldBelongToClass(CORINFO_FIELD_HANDLE fld, CORINFO_CLASS_HANDLE cls)
+{
+    DLDL key;
+    ZeroMemory(&key, sizeof(key)); // Zero key including any struct padding
+    key.A = CastHandle(fld);
+    key.B = CastHandle(cls);
+
+    AssertMapAndKeyExist(DoesFieldBelongToClass, key, ": key %016llX %016llX", key.A, key.B);
+
+    bool value = (bool)DoesFieldBelongToClass->Get(key);
+    DEBUG_REP(dmpDoesFieldBelongToClass(key, value));
+    return value;
+}
+
 void MethodContext::recIsValidToken(CORINFO_MODULE_HANDLE module, unsigned metaTOK, bool result)
 {
     if (IsValidToken == nullptr)
@@ -6577,6 +6554,41 @@ bool MethodContext::repGetTailCallHelpers(
     return true;
 }
 
+void MethodContext::recUpdateEntryPointForTailCall(
+    const CORINFO_CONST_LOOKUP& origEntryPoint,
+    const CORINFO_CONST_LOOKUP& newEntryPoint)
+{
+    if (UpdateEntryPointForTailCall == nullptr)
+        UpdateEntryPointForTailCall = new LightWeightMap<Agnostic_CORINFO_CONST_LOOKUP, Agnostic_CORINFO_CONST_LOOKUP>();
+
+    Agnostic_CORINFO_CONST_LOOKUP key = SpmiRecordsHelper::StoreAgnostic_CORINFO_CONST_LOOKUP(&origEntryPoint);
+    Agnostic_CORINFO_CONST_LOOKUP value = SpmiRecordsHelper::StoreAgnostic_CORINFO_CONST_LOOKUP(&newEntryPoint);
+    UpdateEntryPointForTailCall->Add(key, value);
+    DEBUG_REC(dmpUpdateEntryPointForTailCall(key, value));
+}
+
+void MethodContext::dmpUpdateEntryPointForTailCall(
+    const Agnostic_CORINFO_CONST_LOOKUP& origEntryPoint,
+    const Agnostic_CORINFO_CONST_LOOKUP& newEntryPoint)
+{
+    printf("UpdateEntryPointForTailcall orig=%s new=%s",
+        SpmiDumpHelper::DumpAgnostic_CORINFO_CONST_LOOKUP(origEntryPoint).c_str(),
+        SpmiDumpHelper::DumpAgnostic_CORINFO_CONST_LOOKUP(newEntryPoint).c_str());
+}
+
+void MethodContext::repUpdateEntryPointForTailCall(CORINFO_CONST_LOOKUP* entryPoint)
+{
+    AssertMapExistsNoMessage(UpdateEntryPointForTailCall);
+
+    Agnostic_CORINFO_CONST_LOOKUP key = SpmiRecordsHelper::StoreAgnostic_CORINFO_CONST_LOOKUP(entryPoint);
+    AssertKeyExistsNoMessage(UpdateEntryPointForTailCall, key);
+
+    Agnostic_CORINFO_CONST_LOOKUP value = UpdateEntryPointForTailCall->Get(key);
+    DEBUG_REP(dmpUpdateEntryPointForTailCall(key, value));
+
+    *entryPoint = SpmiRecordsHelper::RestoreCORINFO_CONST_LOOKUP(value);
+}
+
 void MethodContext::recGetMethodDefFromMethod(CORINFO_METHOD_HANDLE hMethod, mdMethodDef result)
 {
     if (GetMethodDefFromMethod == nullptr)
@@ -6677,6 +6689,30 @@ unsigned MethodContext::repGetArrayRank(CORINFO_CLASS_HANDLE cls)
     DWORD value = GetArrayRank->Get(key);
     DEBUG_REP(dmpGetArrayRank(key, value));
     unsigned result = (unsigned)value;
+    return result;
+}
+
+void MethodContext::recGetArrayIntrinsicID(CORINFO_METHOD_HANDLE hMethod, CorInfoArrayIntrinsic result)
+{
+    if (GetArrayIntrinsicID == nullptr)
+        GetArrayIntrinsicID = new LightWeightMap<DWORDLONG, DWORD>();
+
+    DWORDLONG key = CastHandle(hMethod);
+    DWORD value = (DWORD)result;
+    GetArrayIntrinsicID->Add(key, value);
+    DEBUG_REC(dmpGetArrayIntrinsicID(key, value));
+}
+void MethodContext::dmpGetArrayIntrinsicID(DWORDLONG key, DWORD value)
+{
+    printf("GetArrayIntrinsicID key %016llX, value %u", key, value);
+}
+CorInfoArrayIntrinsic MethodContext::repGetArrayIntrinsicID(CORINFO_METHOD_HANDLE hMethod)
+{
+    DWORDLONG key = CastHandle(hMethod);
+    AssertMapAndKeyExist(GetArrayIntrinsicID, key, ": key %016llX", key);
+    DWORD value = GetArrayIntrinsicID->Get(key);
+    DEBUG_REP(dmpGetArrayIntrinsicID(key, value));
+    CorInfoArrayIntrinsic result = (CorInfoArrayIntrinsic)value;
     return result;
 }
 
@@ -6826,7 +6862,8 @@ int MethodContext::dumpMethodIdentityInfoToBuffer(char* buff, int len, bool igno
     }
     else
     {
-        repCompileMethod(&info, &flags);
+        CORINFO_OS os;
+        repCompileMethod(&info, &flags, &os);
         pInfo = &info;
     }
 
@@ -6960,7 +6997,8 @@ bool MethodContext::hasPgoData(bool& hasEdgeProfile, bool& hasClassProfile, bool
     // Obtain the Method Info structure for this method
     CORINFO_METHOD_INFO  info;
     unsigned             flags = 0;
-    repCompileMethod(&info, &flags);
+    CORINFO_OS os;
+    repCompileMethod(&info, &flags, &os);
 
     if ((GetPgoInstrumentationResults != nullptr) &&
         (GetPgoInstrumentationResults->GetIndex(CastHandle(info.ftn)) != -1))

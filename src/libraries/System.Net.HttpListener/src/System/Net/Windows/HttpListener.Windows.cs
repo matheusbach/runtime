@@ -508,7 +508,14 @@ namespace System.Net
                 uint size = 4096;
                 ulong requestId = 0;
                 memoryBlob = new SyncRequestContext((int)size);
-                HttpListenerSession session = _currentSession!;
+                HttpListenerSession? session = _currentSession;
+
+                // Because there is no synchronization, the listener can be stopped or closed while the method is executing,
+                // resulting in a null session
+                if (session == null)
+                {
+                    throw new HttpListenerException((int)Interop.HttpApi.ERROR_INVALID_PARAMETER);
+                }
 
                 while (true)
                 {
@@ -617,10 +624,20 @@ namespace System.Net
                 {
                     throw new InvalidOperationException(SR.Format(SR.net_listener_mustcall, "Start()"));
                 }
+
+                HttpListenerSession? session = _currentSession;
+
+                // Because there is no synchronization, the listener can be stopped or closed while the method is executing,
+                // resulting in a null session
+                if (session == null)
+                {
+                    throw new HttpListenerException((int)Interop.HttpApi.ERROR_INVALID_PARAMETER);
+                }
+
                 // prepare the ListenerAsyncResult object (this will have it's own
                 // event that the user can wait on for IO completion - which means we
                 // need to signal it when IO completes)
-                asyncResult = new ListenerAsyncResult(_currentSession!, state, callback);
+                asyncResult = new ListenerAsyncResult(session, state, callback);
                 uint statusCode = asyncResult.QueueBeginGetContext();
                 if (statusCode != Interop.HttpApi.ERROR_SUCCESS &&
                     statusCode != Interop.HttpApi.ERROR_IO_PENDING)
@@ -962,7 +979,7 @@ namespace System.Net
                                                 if (NetEventSource.Log.IsEnabled())
                                                 {
                                                     NetEventSource.Info(this,
-                                                        $"HandleAuthentication creating new WindowsIdentity from user context: {userContext.DangerousGetHandle().ToString("x8")}");
+                                                        $"HandleAuthentication creating new WindowsIdentity from user context: {userContext.DangerousGetHandle():x8}");
                                                 }
 
                                                 WindowsPrincipal windowsPrincipal = new WindowsPrincipal(
@@ -1881,7 +1898,7 @@ namespace System.Net
 
             private static unsafe void WaitCallback(uint errorCode, uint numBytes, NativeOverlapped* nativeOverlapped)
             {
-                if (NetEventSource.Log.IsEnabled()) NetEventSource.Info(null, $"errorCode: {errorCode}, numBytes: {numBytes}, nativeOverlapped: {((IntPtr)nativeOverlapped).ToString("x")}");
+                if (NetEventSource.Log.IsEnabled()) NetEventSource.Info(null, $"errorCode: {errorCode}, numBytes: {numBytes}, nativeOverlapped: {(IntPtr)nativeOverlapped:x}");
                 // take the DisconnectAsyncResult object from the state
                 DisconnectAsyncResult asyncResult = (DisconnectAsyncResult)ThreadPoolBoundHandle.GetNativeOverlappedState(nativeOverlapped)!;
                 IOCompleted(asyncResult, errorCode, numBytes, nativeOverlapped);

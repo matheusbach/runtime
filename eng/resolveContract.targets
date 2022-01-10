@@ -25,6 +25,7 @@
   <!-- Allow P2Ps that target a source project to build against the corresponding ref project. -->
   <Target Name="AnnotateTargetPathWithTargetPlatformMonikerWithReferenceAssembly"
           Condition="'$(HasMatchingContract)' == 'true'"
+          DependsOnTargets="ResolveProjectReferences"
           AfterTargets="GetTargetPathWithTargetPlatformMoniker">
     <ItemGroup>
       <TargetPathWithTargetPlatformMoniker ReferenceAssembly="@(ResolvedMatchingContract)" />
@@ -45,7 +46,7 @@
         <ProjectReferenceItemSpec>$([System.IO.Path]::GetFullPath('%(ProjectReference.Identity)'))</ProjectReferenceItemSpec>
         <SkipUseReferenceAssembly>%(ProjectReference.SkipUseReferenceAssembly)</SkipUseReferenceAssembly>
       </_resolvedP2PFiltered>
-      <_ResolvedProjectReferencePaths Update="@(_resolvedProjectReferenceFiltred)"
+      <_ResolvedProjectReferencePaths Update="@(_resolvedP2PFiltered)"
                                       Condition="'%(_resolvedP2PFiltered.ProjectReferenceItemSpec)' == '%(_resolvedP2PFiltered.MSBuildSourceProjectFile)' and
                                                  '%(_resolvedP2PFiltered.SkipUseReferenceAssembly)' == 'true'"
                                       ReferenceAssembly="" />

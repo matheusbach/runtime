@@ -30,7 +30,11 @@ typedef enum {
 	FRAME_TYPE_INTERP_TO_MANAGED_WITH_CTX = 6,
 	/* Frame for transitioning to interpreted code */
 	FRAME_TYPE_INTERP_ENTRY = 7,
-	FRAME_TYPE_NUM = 8
+	/* Frame marking transition to native JIT compiler */
+	FRAME_TYPE_JIT_ENTRY = 8,
+	/* Compiled method with IL state */
+	FRAME_TYPE_IL_STATE = 9,
+	FRAME_TYPE_NUM = 10
 } MonoStackFrameType;
 
 typedef enum {
@@ -101,6 +105,9 @@ typedef struct {
 	guint8 *unwind_info;
 
 	host_mgreg_t **reg_locations;
+
+	/* For FRAME_TYPE_IL_STATE */
+	gpointer il_state; /* MonoMethodILState */
 } MonoStackFrameInfo;
 
 /*Index into MonoThreadState::unwind_data. */

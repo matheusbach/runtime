@@ -60,12 +60,12 @@ namespace System.Reflection
 
         public string? CodeBase
         {
-            [RequiresAssemblyFiles(Message = "The code will return an empty string for assemblies embedded in a single-file app")]
+            [RequiresAssemblyFiles("The code will return an empty string for assemblies embedded in a single-file app")]
             get => _codeBase;
             set => _codeBase = value;
         }
 
-        [RequiresAssemblyFiles(Message = "The code will return an empty string for assemblies embedded in a single-file app")]
+        [RequiresAssemblyFiles("The code will return an empty string for assemblies embedded in a single-file app")]
         public string? EscapedCodeBase
         {
             get
@@ -77,6 +77,7 @@ namespace System.Reflection
             }
         }
 
+        [Obsolete(Obsoletions.AssemblyNameMembersMessage, DiagnosticId = Obsoletions.AssemblyNameMembersDiagId, UrlFormat = Obsoletions.SharedUrlFormat)]
         public ProcessorArchitecture ProcessorArchitecture
         {
             get
@@ -126,7 +127,7 @@ namespace System.Reflection
                 _publicKey = (byte[]?)_publicKey?.Clone(),
                 _publicKeyToken = (byte[]?)_publicKeyToken?.Clone(),
                 _cultureInfo = _cultureInfo,
-                _version = (Version?)_version?.Clone(),
+                _version = _version,
                 _flags = _flags,
                 _codeBase = _codeBase,
                 _hashAlgorithm = _hashAlgorithm,
@@ -189,12 +190,14 @@ namespace System.Reflection
             }
         }
 
+        [Obsolete(Obsoletions.AssemblyNameMembersMessage, DiagnosticId = Obsoletions.AssemblyNameMembersDiagId, UrlFormat = Obsoletions.SharedUrlFormat)]
         public AssemblyHashAlgorithm HashAlgorithm
         {
             get => _hashAlgorithm;
             set => _hashAlgorithm = value;
         }
 
+        [Obsolete(Obsoletions.AssemblyNameMembersMessage, DiagnosticId = Obsoletions.AssemblyNameMembersDiagId, UrlFormat = Obsoletions.SharedUrlFormat)]
         public AssemblyVersionCompatibility VersionCompatibility
         {
             get => _versionCompatibility;
@@ -261,7 +264,7 @@ namespace System.Reflection
             return refName.Equals(defName, StringComparison.OrdinalIgnoreCase);
         }
 
-        [RequiresAssemblyFiles(Message = "The code will return an empty string for assemblies embedded in a single-file app")]
+        [RequiresAssemblyFiles("The code will return an empty string for assemblies embedded in a single-file app")]
         internal static string EscapeCodeBase(string? codebase)
         {
             if (codebase == null)

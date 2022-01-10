@@ -136,24 +136,6 @@ namespace System.DirectoryServices.Protocols
             _serverCertificateRoutine = new VERIFYSERVERCERT(ProcessServerCertificate);
         }
 
-        public ReferralChasingOptions ReferralChasing
-        {
-            get
-            {
-                int result = GetIntValueHelper(LdapOption.LDAP_OPT_REFERRALS);
-                return result == 1 ? ReferralChasingOptions.All : (ReferralChasingOptions)result;
-            }
-            set
-            {
-                if (((value) & (~ReferralChasingOptions.All)) != 0)
-                {
-                    throw new InvalidEnumArgumentException(nameof(value), (int)value, typeof(ReferralChasingOptions));
-                }
-
-                SetIntValueHelper(LdapOption.LDAP_OPT_REFERRALS, (int)value);
-            }
-        }
-
         public int ReferralHopLimit
         {
             get => GetIntValueHelper(LdapOption.LDAP_OPT_REFERRAL_HOP_LIMIT);
@@ -659,11 +641,14 @@ namespace System.DirectoryServices.Protocols
                         response.ResponseName = "1.3.6.1.4.1.1466.20037";
                         throw new TlsOperationException(response);
                     }
-                    else if (LdapErrorMappings.IsLdapError(error))
+
+                    if (LdapErrorMappings.IsLdapError(error))
                     {
                         string errorMessage = LdapErrorMappings.MapResultCode(error);
                         throw new LdapException(error, errorMessage);
                     }
+
+                    throw new LdapException(error);
                 }
             }
             finally

@@ -6,6 +6,8 @@
 // Sets up basic environment for CLR GC
 //
 
+#include <minipal/utils.h>
+
 #ifdef _MSC_VER
 #include <intrin.h>
 #endif // _MSC_VER
@@ -93,10 +95,6 @@ inline HRESULT HRESULT_FROM_WIN32(unsigned long x)
 #define INFINITE 0xFFFFFFFF
 
 #define ZeroMemory(Destination,Length) memset((Destination),0,(Length))
-
-#ifndef _countof
-#define _countof(_array) (sizeof(_array)/sizeof(_array[0]))
-#endif
 
 #ifndef min
 #define min(a,b) (((a) < (b)) ? (a) : (b))
@@ -227,15 +225,10 @@ typedef DWORD (WINAPI *PTHREAD_START_ROUTINE)(void* lpThreadParameter);
 
 #endif // defined(__i386__) || defined(__x86_64__)
 
-#ifdef __aarch64__
+#if defined(__arm__) || defined(__aarch64__)
  #define YieldProcessor() asm volatile ("yield")
  #define MemoryBarrier __sync_synchronize
-#endif // __aarch64__
-
-#ifdef __arm__
- #define YieldProcessor()
- #define MemoryBarrier __sync_synchronize
-#endif // __arm__
+#endif // __arm__ || __aarch64__
 
 #endif // _MSC_VER
 
@@ -534,7 +527,11 @@ namespace ETW
         GC_ROOT_HANDLES = 2,
         GC_ROOT_OLDER = 3,
         GC_ROOT_SIZEDREF = 4,
-        GC_ROOT_OVERFLOW = 5
+        GC_ROOT_OVERFLOW = 5,
+        GC_ROOT_DH_HANDLES = 6,
+        GC_ROOT_NEW_FQ = 7,
+        GC_ROOT_STEAL = 8,
+        GC_ROOT_BGC = 9
     } GC_ROOT_KIND;
 };
 

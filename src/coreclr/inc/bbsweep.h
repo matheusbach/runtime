@@ -22,10 +22,6 @@
 #include <aclapi.h>
 #endif // !TARGET_UNIX
 
-#ifndef ARRAYSIZE
-#define ARRAYSIZE(x)    (sizeof(x)/sizeof(x[0]))
-#endif // !ARRAYSIZE
-
 // The CLR headers don't allow us to use methods like SetEvent directly (instead
 // we need to use the host APIs).  However, this file is included both in the CLR
 // and in the BBSweep tool, and the host API is not available in the tool.  Moreover,
@@ -284,7 +280,7 @@ private:
             GetObjectNamePrefix(processID, fromRuntime, objectNamePrefix);
             // if there is a non-empty name prefix, append a '\'
             if (objectNamePrefix[0] != '\0')
-                wcscat_s(objectNamePrefix, ARRAYSIZE(objectNamePrefix), W("\\"));
+                wcscat_s(objectNamePrefix, ARRAY_SIZE(objectNamePrefix), W("\\"));
             swprintf_s(objectName, MAX_LONGPATH, W("%sBBSweep_hSweepMutex"), objectNamePrefix);
             hSweepMutex          = ::WszCreateMutex(pSecurityAttributes, false,       objectName);
             swprintf_s(objectName, MAX_LONGPATH, W("%sBBSweep_hProfDataWriterMutex"), objectNamePrefix);
@@ -385,7 +381,7 @@ cleanup:
                 }
                 else
                 {
-#if defined (FEATURE_CORESYSTEM) && !defined(CROSSGEN_COMPILE) && !defined(DACCESS_COMPILE)
+#if defined (FEATURE_CORESYSTEM) && !defined(DACCESS_COMPILE)
 #define MODULE_NAME W("api-ms-win-security-appcontainer-l1-1-0.dll")
 #else
 #define MODULE_NAME W("kernel32.dll")

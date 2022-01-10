@@ -78,6 +78,7 @@ namespace System.Diagnostics.Tests
 
         [Fact]
         [OuterLoop("Opens program")]
+        [SkipOnPlatform(TestPlatforms.MacCatalyst, "In App Sandbox mode, the process doesn't have read access to the binary.")]
         public void ProcessStart_DirectoryNameInCurDirectorySameAsFileNameInExecDirectory_Success()
         {
             string fileToOpen = "dotnet";
@@ -157,8 +158,8 @@ namespace System.Diagnostics.Tests
         }
 
         [Fact]
-        [SkipOnPlatform(TestPlatforms.OSX, "On OSX, ProcessName returns the script interpreter.")]
-        [SkipOnPlatform(TestPlatforms.iOS | TestPlatforms.MacCatalyst | TestPlatforms.tvOS, "Not supported on iOS, MacCatalyst, or tvOS.")]
+        [SkipOnPlatform(TestPlatforms.OSX | TestPlatforms.MacCatalyst, "On OSX, ProcessName returns the script interpreter.")]
+        [SkipOnPlatform(TestPlatforms.iOS | TestPlatforms.tvOS, "Not supported on iOS or tvOS.")]
         public void ProcessNameMatchesScriptName()
         {
             string scriptName = GetTestFileName();
@@ -183,6 +184,40 @@ namespace System.Diagnostics.Tests
                     process.WaitForExit();
                 }
             }
+        }
+
+        [ConditionalFact(typeof(RemoteExecutor), nameof(RemoteExecutor.IsSupported))]
+        public void ProcessStart_SkipsNonExecutableFilesOnPATH()
+        {
+            const string ScriptName = "script";
+
+            // Create a directory named ScriptName.
+            string path1 = Path.Combine(TestDirectory, "Path1");
+            Directory.CreateDirectory(Path.Combine(path1, ScriptName));
+
+            // Create a non-executable file named ScriptName
+            string path2 = Path.Combine(TestDirectory, "Path2");
+            Directory.CreateDirectory(path2);
+            File.WriteAllText(Path.Combine(path2, ScriptName), "Not executable");
+
+            // Create an executable script named ScriptName
+            string path3 = Path.Combine(TestDirectory, "Path3");
+            Directory.CreateDirectory(path3);
+            string filename = WriteScriptFile(path3, ScriptName, returnValue: 42);
+
+            // Process.Start ScriptName with the above on PATH.
+            RemoteInvokeOptions options = new RemoteInvokeOptions();
+            options.StartInfo.EnvironmentVariables["PATH"] = $"{path1}:{path2}:{path3}";
+            RemoteExecutor.Invoke(() =>
+            {
+                using (var px = Process.Start(new ProcessStartInfo { FileName = ScriptName }))
+                {
+                    Assert.NotNull(px);
+                    px.WaitForExit();
+                    Assert.True(px.HasExited);
+                    Assert.Equal(42, px.ExitCode);
+                }
+            }, options).Dispose();
         }
 
         [ConditionalFact(typeof(RemoteExecutor), nameof(RemoteExecutor.IsSupported))]
@@ -345,7 +380,7 @@ namespace System.Diagnostics.Tests
         }
 
         [Theory, InlineData("/usr/bin/open"), InlineData("/usr/bin/nano")]
-        [PlatformSpecific(TestPlatforms.OSX)]
+        [PlatformSpecific(TestPlatforms.OSX | TestPlatforms.MacCatalyst)]
         [OuterLoop("Opens program")]
         public void ProcessStart_OpenFileOnOsx_UsesSpecifiedProgram(string programToOpenWith)
         {
@@ -362,7 +397,7 @@ namespace System.Diagnostics.Tests
         }
 
         [Theory, InlineData("Safari"), InlineData("\"Google Chrome\"")]
-        [PlatformSpecific(TestPlatforms.OSX)]
+        [PlatformSpecific(TestPlatforms.OSX | TestPlatforms.MacCatalyst)]
         [OuterLoop("Opens browser")]
         public void ProcessStart_OpenUrl_UsesSpecifiedApplication(string applicationToOpenWith)
         {
@@ -376,7 +411,7 @@ namespace System.Diagnostics.Tests
         }
 
         [Theory, InlineData("-a Safari"), InlineData("-a \"Google Chrome\"")]
-        [PlatformSpecific(TestPlatforms.OSX)]
+        [PlatformSpecific(TestPlatforms.OSX | TestPlatforms.MacCatalyst)]
         [OuterLoop("Opens browser")]
         public void ProcessStart_UseShellExecuteTrue_OpenUrl_SuccessfullyReadsArgument(string arguments)
         {
@@ -398,7 +433,7 @@ namespace System.Diagnostics.Tests
 
         [Theory,
             MemberData(nameof(StartOSXProcessWithArgumentList))]
-        [PlatformSpecific(TestPlatforms.OSX)]
+        [PlatformSpecific(TestPlatforms.OSX | TestPlatforms.MacCatalyst)]
         [OuterLoop("Opens browser")]
         public void ProcessStart_UseShellExecuteTrue_OpenUrl_SuccessfullyReadsArgumentArray(string[] argumentList)
         {
@@ -468,7 +503,7 @@ namespace System.Diagnostics.Tests
         }
 
         [Fact]
-        [SkipOnPlatform(TestPlatforms.iOS | TestPlatforms.MacCatalyst | TestPlatforms.tvOS, "Not supported on iOS, MacCatalyst, or tvOS.")]
+        [SkipOnPlatform(TestPlatforms.iOS | TestPlatforms.tvOS, "Not supported on iOS or tvOS.")]
         public void TestStartOnUnixWithBadPermissions()
         {
             string path = GetTestFilePath();
@@ -480,7 +515,7 @@ namespace System.Diagnostics.Tests
         }
 
         [Fact]
-        [SkipOnPlatform(TestPlatforms.iOS | TestPlatforms.MacCatalyst | TestPlatforms.tvOS, "Not supported on iOS, MacCatalyst, or tvOS.")]
+        [SkipOnPlatform(TestPlatforms.iOS | TestPlatforms.tvOS, "Not supported on iOS or tvOS.")]
         public void TestStartOnUnixWithBadFormat()
         {
             string path = GetTestFilePath();

@@ -68,6 +68,7 @@ namespace System
             Debug.Assert(array != null);
         }
 
+        [RequiresDynamicCode("The native code for the array might not be available at runtime.")]
         public static Array CreateInstance(Type elementType, params long[] lengths)
         {
             if (lengths == null)
@@ -785,9 +786,16 @@ namespace System
                 ThrowHelper.ThrowArgumentNullException(ExceptionArgument.array);
             }
 
-            for (int i = 0; i < array.Length; i++)
+            if (!typeof(T).IsValueType && array.GetType() != typeof(T[]))
             {
-                array[i] = value;
+                for (int i = 0; i < array.Length; i++)
+                {
+                    array[i] = value;
+                }
+            }
+            else
+            {
+                new Span<T>(array).Fill(value);
             }
         }
 
@@ -798,19 +806,27 @@ namespace System
                 ThrowHelper.ThrowArgumentNullException(ExceptionArgument.array);
             }
 
-            if (startIndex < 0 || startIndex > array.Length)
+            if ((uint)startIndex > (uint)array.Length)
             {
                 ThrowHelper.ThrowStartIndexArgumentOutOfRange_ArgumentOutOfRange_Index();
             }
 
-            if (count < 0 || startIndex > array.Length - count)
+            if ((uint)count > (uint)(array.Length - startIndex))
             {
                 ThrowHelper.ThrowCountArgumentOutOfRange_ArgumentOutOfRange_Count();
             }
 
-            for (int i = startIndex; i < startIndex + count; i++)
+            if (!typeof(T).IsValueType && array.GetType() != typeof(T[]))
             {
-                array[i] = value;
+                for (int i = startIndex; i < startIndex + count; i++)
+                {
+                    array[i] = value;
+                }
+            }
+            else
+            {
+                ref T first = ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(array), (nint)(uint)startIndex);
+                new Span<T>(ref first, count).Fill(value);
             }
         }
 
@@ -1217,18 +1233,28 @@ namespace System
                 }
                 else if (Unsafe.SizeOf<T>() == sizeof(int))
                 {
-                    int result = SpanHelpers.IndexOf(
-                        ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(Unsafe.As<int[]>(array)), startIndex),
-                        Unsafe.As<T, int>(ref value),
-                        count);
+                    int result = typeof(T).IsValueType
+                        ? SpanHelpers.IndexOfValueType(
+                            ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(Unsafe.As<int[]>(array)), startIndex),
+                            Unsafe.As<T, int>(ref value),
+                            count)
+                        : SpanHelpers.IndexOf(
+                            ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(Unsafe.As<int[]>(array)), startIndex),
+                            Unsafe.As<T, int>(ref value),
+                            count);
                     return (result >= 0 ? startIndex : 0) + result;
                 }
                 else if (Unsafe.SizeOf<T>() == sizeof(long))
                 {
-                    int result = SpanHelpers.IndexOf(
-                        ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(Unsafe.As<long[]>(array)), startIndex),
-                        Unsafe.As<T, long>(ref value),
-                        count);
+                    int result = typeof(T).IsValueType
+                        ? SpanHelpers.IndexOfValueType(
+                            ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(Unsafe.As<long[]>(array)), startIndex),
+                            Unsafe.As<T, long>(ref value),
+                            count)
+                        : SpanHelpers.IndexOf(
+                            ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(Unsafe.As<long[]>(array)), startIndex),
+                            Unsafe.As<T, long>(ref value),
+                            count);
                     return (result >= 0 ? startIndex : 0) + result;
                 }
             }

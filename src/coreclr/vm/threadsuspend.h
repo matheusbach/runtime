@@ -36,7 +36,7 @@ struct MinMaxTot
         minVal = maxVal = 0;
     }
 
-    void DisplayAndUpdate(FILE* logFile, __in_z const char *pName, MinMaxTot *pLastOne, int fullCount, int priorCount, timeUnit=usec);
+    void DisplayAndUpdate(FILE* logFile, _In_z_ const char *pName, MinMaxTot *pLastOne, int fullCount, int priorCount, timeUnit=usec);
 };
 
 // A note about timings.  We use QueryPerformanceCounter to measure all timings in units.  During
@@ -194,6 +194,10 @@ public:
 private:
     static CLREvent * g_pGCSuspendEvent;
 
+#if defined(TARGET_WINDOWS) && defined(TARGET_AMD64)
+    static void* g_returnAddressHijackTarget;
+#endif // TARGET_WINDOWS && TARGET_AMD64
+
     // This is true iff we're currently in the process of suspending threads.  Once the
     // threads have been suspended, this is false.  This is set via an instance of
     // SuspendRuntimeInProgressHolder placed in SuspendRuntime, SysStartSuspendForDebug,
@@ -246,6 +250,13 @@ public:
         LIMITED_METHOD_CONTRACT;
         return g_pSuspensionThread;
     }
+
+#if defined(TARGET_WINDOWS) && defined(TARGET_AMD64)
+    static void* GetReturnAddressHijackTarget()
+    {
+        return g_returnAddressHijackTarget;
+    }
+#endif // TARGET_WINDOWS && TARGET_AMD64
 
 private:
     static LONG m_DebugWillSyncCount;

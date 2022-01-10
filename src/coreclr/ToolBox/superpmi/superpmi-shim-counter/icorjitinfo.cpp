@@ -12,11 +12,11 @@
 #include "spmiutil.h"
 
 
-bool interceptor_ICJI::isJitIntrinsic(
+bool interceptor_ICJI::isIntrinsic(
           CORINFO_METHOD_HANDLE ftn)
 {
-    mcs->AddCall("isJitIntrinsic");
-    return original_ICorJitInfo->isJitIntrinsic(ftn);
+    mcs->AddCall("isIntrinsic");
+    return original_ICorJitInfo->isIntrinsic(ftn);
 }
 
 uint32_t interceptor_ICJI::getMethodAttribs(
@@ -159,14 +159,6 @@ void interceptor_ICJI::expandRawHandleIntrinsic(
 {
     mcs->AddCall("expandRawHandleIntrinsic");
     original_ICorJitInfo->expandRawHandleIntrinsic(pResolvedToken, pResult);
-}
-
-CorInfoIntrinsics interceptor_ICJI::getIntrinsicID(
-          CORINFO_METHOD_HANDLE method,
-          bool* pMustExpand)
-{
-    mcs->AddCall("getIntrinsicID");
-    return original_ICorJitInfo->getIntrinsicID(method, pMustExpand);
 }
 
 bool interceptor_ICJI::isIntrinsicType(
@@ -376,13 +368,6 @@ uint32_t interceptor_ICJI::getClassAttribs(
 {
     mcs->AddCall("getClassAttribs");
     return original_ICorJitInfo->getClassAttribs(cls);
-}
-
-bool interceptor_ICJI::isStructRequiringStackAllocRetBuf(
-          CORINFO_CLASS_HANDLE cls)
-{
-    mcs->AddCall("isStructRequiringStackAllocRetBuf");
-    return original_ICorJitInfo->isStructRequiringStackAllocRetBuf(cls);
 }
 
 CORINFO_MODULE_HANDLE interceptor_ICJI::getClassModule(
@@ -689,6 +674,13 @@ unsigned interceptor_ICJI::getArrayRank(
     return original_ICorJitInfo->getArrayRank(cls);
 }
 
+CorInfoArrayIntrinsic interceptor_ICJI::getArrayIntrinsicID(
+          CORINFO_METHOD_HANDLE ftn)
+{
+    mcs->AddCall("getArrayIntrinsicID");
+    return original_ICorJitInfo->getArrayIntrinsicID(ftn);
+}
+
 void* interceptor_ICJI::getArrayInitializationData(
           CORINFO_FIELD_HANDLE field,
           uint32_t size)
@@ -859,13 +851,6 @@ int interceptor_ICJI::FilterException(
     return original_ICorJitInfo->FilterException(pExceptionPointers);
 }
 
-void interceptor_ICJI::HandleException(
-          struct _EXCEPTION_POINTERS* pExceptionPointers)
-{
-    mcs->AddCall("HandleException");
-    original_ICorJitInfo->HandleException(pExceptionPointers);
-}
-
 void interceptor_ICJI::ThrowExceptionForJitResult(
           JITINTERFACE_HRESULT result)
 {
@@ -886,6 +871,14 @@ bool interceptor_ICJI::runWithErrorTrap(
 {
     mcs->AddCall("runWithErrorTrap");
     return original_ICorJitInfo->runWithErrorTrap(function, parameter);
+}
+
+bool interceptor_ICJI::runWithSPMIErrorTrap(
+          ICorJitInfo::errorTrapFunction function,
+          void* parameter)
+{
+    mcs->AddCall("runWithSPMIErrorTrap");
+    return original_ICorJitInfo->runWithSPMIErrorTrap(function, parameter);
 }
 
 void interceptor_ICJI::getEEInfo(
@@ -991,10 +984,11 @@ void interceptor_ICJI::getFunctionEntryPoint(
 
 void interceptor_ICJI::getFunctionFixedEntryPoint(
           CORINFO_METHOD_HANDLE ftn,
+          bool isUnsafeFunctionPointer,
           CORINFO_CONST_LOOKUP* pResult)
 {
     mcs->AddCall("getFunctionFixedEntryPoint");
-    original_ICorJitInfo->getFunctionFixedEntryPoint(ftn, pResult);
+    original_ICorJitInfo->getFunctionFixedEntryPoint(ftn, isUnsafeFunctionPointer, pResult);
 }
 
 void* interceptor_ICJI::getMethodSync(
@@ -1249,6 +1243,13 @@ bool interceptor_ICJI::notifyInstructionSetUsage(
     return original_ICorJitInfo->notifyInstructionSetUsage(instructionSet, supportEnabled);
 }
 
+void interceptor_ICJI::updateEntryPointForTailCall(
+          CORINFO_CONST_LOOKUP* entryPoint)
+{
+    mcs->AddCall("updateEntryPointForTailCall");
+    original_ICorJitInfo->updateEntryPointForTailCall(entryPoint);
+}
+
 void interceptor_ICJI::allocMem(
           AllocMemArgs* pArgs)
 {
@@ -1386,5 +1387,13 @@ uint32_t interceptor_ICJI::getJitFlags(
 {
     mcs->AddCall("getJitFlags");
     return original_ICorJitInfo->getJitFlags(flags, sizeInBytes);
+}
+
+bool interceptor_ICJI::doesFieldBelongToClass(
+          CORINFO_FIELD_HANDLE fldHnd,
+          CORINFO_CLASS_HANDLE cls)
+{
+    mcs->AddCall("doesFieldBelongToClass");
+    return original_ICorJitInfo->doesFieldBelongToClass(fldHnd, cls);
 }
 

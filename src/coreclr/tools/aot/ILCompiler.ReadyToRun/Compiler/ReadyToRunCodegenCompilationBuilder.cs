@@ -31,9 +31,8 @@ namespace ILCompiler
         private string _pdbPath;
         private bool _generatePerfMapFile;
         private string _perfMapPath;
-        private Guid? _perfMapMvid;
+        private int _perfMapFormatVersion;
         private bool _generateProfileFile;
-        private int _parallelism;
         Func<MethodDesc, string> _printReproInstructions;
         private InstructionSetSupport _instructionSetSupport;
         private ProfileDataManager _profileData;
@@ -156,23 +155,17 @@ namespace ILCompiler
             return this;
         }
 
-        public ReadyToRunCodegenCompilationBuilder UsePerfMapFile(bool generatePerfMapFile, string perfMapPath, Guid? inputModuleMvid)
+        public ReadyToRunCodegenCompilationBuilder UsePerfMapFile(bool generatePerfMapFile, string perfMapPath, int perfMapFormatVersion)
         {
             _generatePerfMapFile = generatePerfMapFile;
             _perfMapPath = perfMapPath;
-            _perfMapMvid = inputModuleMvid;
+            _perfMapFormatVersion = perfMapFormatVersion;
             return this;
         }
 
         public ReadyToRunCodegenCompilationBuilder UseProfileFile(bool generateProfileFile)
         {
             _generateProfileFile = generateProfileFile;
-            return this;
-        }
-
-        public ReadyToRunCodegenCompilationBuilder UseParallelism(int parallelism)
-        {
-            _parallelism = parallelism;
             return this;
         }
 
@@ -219,7 +212,7 @@ namespace ILCompiler
             EcmaModule singleModule = _compilationGroup.IsCompositeBuildMode ? null : inputModules.First();
             CopiedCorHeaderNode corHeaderNode = new CopiedCorHeaderNode(singleModule);
             // TODO: proper support for multiple input files
-            DebugDirectoryNode debugDirectoryNode = new DebugDirectoryNode(singleModule, _outputFile);
+            DebugDirectoryNode debugDirectoryNode = new DebugDirectoryNode(singleModule, _outputFile, _generatePdbFile, _generatePerfMapFile);
 
             // Produce a ResourceData where the IBC PROFILE_DATA entry has been filtered out
             // TODO: proper support for multiple input files
@@ -312,7 +305,7 @@ namespace ILCompiler
                 pdbPath: _pdbPath,
                 generatePerfMapFile: _generatePerfMapFile,
                 perfMapPath: _perfMapPath,
-                perfMapMvid: _perfMapMvid,
+                perfMapFormatVersion: _perfMapFormatVersion,
                 generateProfileFile: _generateProfileFile,
                 _parallelism,
                 _profileData,

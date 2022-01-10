@@ -191,7 +191,7 @@ void DynamicMethodTable::AddMethodsToList()
         pNewMD->SetTemporaryEntryPoint(m_pDomain->GetLoaderAllocator(), &amt);
 
 #ifdef _DEBUG
-        pNewMD->m_pDebugMethodTable.SetValue(m_pMethodTable);
+        pNewMD->m_pDebugMethodTable = m_pMethodTable;
 #endif
 
         if (pPrevMD)
@@ -271,7 +271,7 @@ DynamicMethodDesc* DynamicMethodTable::GetDynamicMethod(BYTE *psig, DWORD sigSiz
     // the store sig part of the method desc
     pNewMD->SetStoredMethodSig((PCCOR_SIGNATURE)psig, sigSize);
     // the dynamic part of the method desc
-    pNewMD->m_pszMethodName.SetValueMaybeNull(name);
+    pNewMD->m_pszMethodName = name;
 
     pNewMD->m_dwExtendedFlags = mdPublic | mdStatic | DynamicMethodDesc::nomdLCGMethod;
 
@@ -380,7 +380,7 @@ HostCodeHeap::~HostCodeHeap()
         delete[] m_pHeapList->pHdrMap;
 
     if (m_pBaseAddr)
-        ClrVirtualFree(m_pBaseAddr, 0, MEM_RELEASE);
+        ExecutableAllocator::Instance()->Release(m_pBaseAddr);
     LOG((LF_BCL, LL_INFO10, "Level1 - CodeHeap destroyed {0x%p}\n", this));
 }
 
@@ -398,13 +398,17 @@ HeapList* HostCodeHeap::InitializeHeapList(CodeHeapRequestInfo *pInfo)
 
     // Add TrackAllocation, HeapList and very conservative padding to make sure we have enough for the allocation
     ReserveBlockSize += sizeof(TrackAllocation) + HOST_CODEHEAP_SIZE_ALIGN + 0x100;
+
+#if defined(TARGET_AMD64) || defined(TARGET_ARM64)
+    ReserveBlockSize += JUMP_ALLOCATE_SIZE;
+#endif
+
     // reserve ReserveBlockSize rounded-up to VIRTUAL_ALLOC_RESERVE_GRANULARITY of memory
     ReserveBlockSize = ALIGN_UP(ReserveBlockSize, VIRTUAL_ALLOC_RESERVE_GRANULARITY);
 
     if (pInfo->m_loAddr != NULL || pInfo->m_hiAddr != NULL)
     {
-        m_pBaseAddr = ClrVirtualAllocWithinRange(pInfo->m_loAddr, pInfo->m_hiAddr,
-            ReserveBlockSize, MEM_RESERVE, PAGE_NOACCESS);
+        m_pBaseAddr = (BYTE*)ExecutableAllocator::Instance()->ReserveWithinRange(ReserveBlockSize, pInfo->m_loAddr, pInfo->m_hiAddr);
         if (!m_pBaseAddr)
         {
             if (pInfo->getThrowOnOutOfMemoryWithinRange())
@@ -417,7 +421,7 @@ HeapList* HostCodeHeap::InitializeHeapList(CodeHeapRequestInfo *pInfo)
         // top up the ReserveBlockSize to suggested minimum
         ReserveBlockSize = max(ReserveBlockSize, pInfo->getReserveSize());
 
-        m_pBaseAddr = ClrVirtualAllocExecutable(ReserveBlockSize, MEM_RESERVE, PAGE_NOACCESS);
+        m_pBaseAddr = (BYTE*)ExecutableAllocator::Instance()->Reserve(ReserveBlockSize);
         if (!m_pBaseAddr)
             ThrowOutOfMemory();
     }
@@ -749,7 +753,7 @@ HostCodeHeap::TrackAllocation* HostCodeHeap::AllocMemory_NoThrow(size_t header, 
 
         if (m_pLastAvailableCommittedAddr + sizeToCommit <= m_pBaseAddr + m_TotalBytesAvailable)
         {
-            if (NULL == ClrVirtualAlloc(m_pLastAvailableCommittedAddr, sizeToCommit, MEM_COMMIT, PAGE_EXECUTE_READWRITE))
+            if (NULL == ExecutableAllocator::Instance()->Commit(m_pLastAvailableCommittedAddr, sizeToCommit, true /* isExecutable */))
             {
                 LOG((LF_BCL, LL_ERROR, "CodeHeap [0x%p] - VirtualAlloc failed\n", this));
                 return NULL;
@@ -881,8 +885,8 @@ void DynamicMethodDesc::Destroy()
     // The m_pSig and m_pszMethodName need to be destroyed after the GetLCGMethodResolver()->Destroy() call
     // otherwise the EEJitManager::CodeHeapIterator could return DynamicMethodDesc with these members NULLed, but
     // the nibble map for the corresponding code memory indicating that this DynamicMethodDesc is still alive.
-    PCODE pSig = m_pSig.GetValue();
-    PTR_CUTF8 pszMethodName = m_pszMethodName.GetValue();
+    PCODE pSig = m_pSig;
+    PTR_CUTF8 pszMethodName = m_pszMethodName;
 
     GetLCGMethodResolver()->Destroy();
     // The current DynamicMethodDesc storage is destroyed at this point

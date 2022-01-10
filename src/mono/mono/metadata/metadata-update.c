@@ -61,21 +61,18 @@ mono_metadata_update_cleanup_on_close (MonoImage *base_image)
 }
 
 void
-mono_image_effective_table_slow (const MonoTableInfo **t, int *idx)
+mono_image_effective_table_slow (const MonoTableInfo **t, int idx)
 {
 	mono_component_hot_reload ()->effective_table_slow (t, idx);
 }
 
-int
-mono_image_relative_delta_index (MonoImage *image_dmeta, int token)
-{
-	return mono_component_hot_reload ()->relative_delta_index (image_dmeta, token);
-}
-
 void
-mono_image_load_enc_delta (MonoImage *base_image, gconstpointer dmeta, uint32_t dmeta_len, gconstpointer dil, uint32_t dil_len, MonoError *error)
+mono_image_load_enc_delta (int origin, MonoImage *base_image, gconstpointer dmeta, uint32_t dmeta_len, gconstpointer dil, uint32_t dil_len, gconstpointer dpdb, uint32_t dpdb_len, MonoError *error)
 {
-	mono_component_hot_reload ()->apply_changes (base_image, dmeta, dmeta_len, dil, dil_len, error);
+	mono_component_hot_reload ()->apply_changes (origin, base_image, dmeta, dmeta_len, dil, dil_len, dpdb, dpdb_len, error);
+	if (is_ok (error)) {
+		mono_component_debugger ()->send_enc_delta (base_image, dmeta, dmeta_len, dpdb, dpdb_len);
+	}
 }
 
 static void
@@ -108,6 +105,12 @@ mono_metadata_update_get_updated_method_rva (MonoImage *base_image, uint32_t idx
         return mono_component_hot_reload ()->get_updated_method_rva (base_image, idx);
 }
 
+gpointer
+mono_metadata_update_get_updated_method_ppdb (MonoImage *base_image, uint32_t idx)
+{
+	return mono_component_hot_reload ()->get_updated_method_ppdb (base_image, idx);
+}
+
 gboolean
 mono_metadata_update_table_bounds_check (MonoImage *base_image, int table_index, int token_index)
 {
@@ -121,3 +124,26 @@ mono_metadata_update_delta_heap_lookup (MonoImage *base_image, MetadataHeapGette
 }
 
 
+gboolean
+mono_metadata_update_has_modified_rows (const MonoTableInfo *table)
+{
+	return mono_component_hot_reload ()->has_modified_rows (table);
+}
+
+gboolean
+mono_metadata_has_updates_api (void)
+{
+        return mono_metadata_has_updates ();
+}
+
+/**
+ * mono_metadata_table_num_rows:
+ *
+ * Returns the number of rows from the specified table that the current thread can see.
+ * If there's a EnC metadata update, this number may change.
+ */
+int
+mono_metadata_table_num_rows_slow (MonoImage *base_image, int table_index)
+{
+	return mono_component_hot_reload()->table_num_rows_slow (base_image, table_index);
+}

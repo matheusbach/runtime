@@ -61,7 +61,7 @@ namespace System.Reflection.Emit
                 throw new ArgumentNullException(nameof(meth));
 
             int stackchange = 0;
-            int token = 0;
+            int token;
             DynamicMethod? dynMeth = meth as DynamicMethod;
             if (dynMeth == null)
             {
@@ -402,15 +402,6 @@ namespace System.Reflection.Emit
         //
         //
         public override void UsingNamespace(string ns)
-        {
-            throw new NotSupportedException(SR.InvalidOperation_NotAllowedInDynamicMethod);
-        }
-
-        public override void MarkSequencePoint(ISymbolDocumentWriter document,
-                                               int startLine,
-                                               int startColumn,
-                                               int endLine,
-                                               int endColumn)
         {
             throw new NotSupportedException(SR.InvalidOperation_NotAllowedInDynamicMethod);
         }
@@ -829,7 +820,7 @@ namespace System.Reflection.Emit
                 if (vaMeth.m_dynamicMethod == null)
                 {
                     methodHandle = vaMeth.m_method!.MethodHandle.Value;
-                    typeHandle = vaMeth.m_method.GetDeclaringTypeInternal().GetTypeHandleInternal().Value;
+                    typeHandle = vaMeth.m_method.GetDeclaringTypeInternal().TypeHandle.Value;
                 }
                 else
                 {

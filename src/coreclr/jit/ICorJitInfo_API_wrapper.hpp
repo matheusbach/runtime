@@ -12,12 +12,12 @@
 // clang-format off
 /**********************************************************************************/
 
-bool WrapICorJitInfo::isJitIntrinsic(
+bool WrapICorJitInfo::isIntrinsic(
           CORINFO_METHOD_HANDLE ftn)
 {
-    API_ENTER(isJitIntrinsic);
-    bool temp = wrapHnd->isJitIntrinsic(ftn);
-    API_LEAVE(isJitIntrinsic);
+    API_ENTER(isIntrinsic);
+    bool temp = wrapHnd->isIntrinsic(ftn);
+    API_LEAVE(isIntrinsic);
     return temp;
 }
 
@@ -188,16 +188,6 @@ void WrapICorJitInfo::expandRawHandleIntrinsic(
     API_ENTER(expandRawHandleIntrinsic);
     wrapHnd->expandRawHandleIntrinsic(pResolvedToken, pResult);
     API_LEAVE(expandRawHandleIntrinsic);
-}
-
-CorInfoIntrinsics WrapICorJitInfo::getIntrinsicID(
-          CORINFO_METHOD_HANDLE method,
-          bool* pMustExpand)
-{
-    API_ENTER(getIntrinsicID);
-    CorInfoIntrinsics temp = wrapHnd->getIntrinsicID(method, pMustExpand);
-    API_LEAVE(getIntrinsicID);
-    return temp;
 }
 
 bool WrapICorJitInfo::isIntrinsicType(
@@ -452,15 +442,6 @@ uint32_t WrapICorJitInfo::getClassAttribs(
     API_ENTER(getClassAttribs);
     uint32_t temp = wrapHnd->getClassAttribs(cls);
     API_LEAVE(getClassAttribs);
-    return temp;
-}
-
-bool WrapICorJitInfo::isStructRequiringStackAllocRetBuf(
-          CORINFO_CLASS_HANDLE cls)
-{
-    API_ENTER(isStructRequiringStackAllocRetBuf);
-    bool temp = wrapHnd->isStructRequiringStackAllocRetBuf(cls);
-    API_LEAVE(isStructRequiringStackAllocRetBuf);
     return temp;
 }
 
@@ -845,6 +826,15 @@ unsigned WrapICorJitInfo::getArrayRank(
     return temp;
 }
 
+CorInfoArrayIntrinsic WrapICorJitInfo::getArrayIntrinsicID(
+          CORINFO_METHOD_HANDLE ftn)
+{
+    API_ENTER(getArrayIntrinsicID);
+    CorInfoArrayIntrinsic temp = wrapHnd->getArrayIntrinsicID(ftn);
+    API_LEAVE(getArrayIntrinsicID);
+    return temp;
+}
+
 void* WrapICorJitInfo::getArrayInitializationData(
           CORINFO_FIELD_HANDLE field,
           uint32_t size)
@@ -1051,14 +1041,6 @@ int WrapICorJitInfo::FilterException(
     return temp;
 }
 
-void WrapICorJitInfo::HandleException(
-          struct _EXCEPTION_POINTERS* pExceptionPointers)
-{
-    API_ENTER(HandleException);
-    wrapHnd->HandleException(pExceptionPointers);
-    API_LEAVE(HandleException);
-}
-
 void WrapICorJitInfo::ThrowExceptionForJitResult(
           JITINTERFACE_HRESULT result)
 {
@@ -1082,6 +1064,16 @@ bool WrapICorJitInfo::runWithErrorTrap(
     API_ENTER(runWithErrorTrap);
     bool temp = wrapHnd->runWithErrorTrap(function, parameter);
     API_LEAVE(runWithErrorTrap);
+    return temp;
+}
+
+bool WrapICorJitInfo::runWithSPMIErrorTrap(
+          ICorJitInfo::errorTrapFunction function,
+          void* parameter)
+{
+    API_ENTER(runWithSPMIErrorTrap);
+    bool temp = wrapHnd->runWithSPMIErrorTrap(function, parameter);
+    API_LEAVE(runWithSPMIErrorTrap);
     return temp;
 }
 
@@ -1212,10 +1204,11 @@ void WrapICorJitInfo::getFunctionEntryPoint(
 
 void WrapICorJitInfo::getFunctionFixedEntryPoint(
           CORINFO_METHOD_HANDLE ftn,
+          bool isUnsafeFunctionPointer,
           CORINFO_CONST_LOOKUP* pResult)
 {
     API_ENTER(getFunctionFixedEntryPoint);
-    wrapHnd->getFunctionFixedEntryPoint(ftn, pResult);
+    wrapHnd->getFunctionFixedEntryPoint(ftn, isUnsafeFunctionPointer, pResult);
     API_LEAVE(getFunctionFixedEntryPoint);
 }
 
@@ -1525,6 +1518,14 @@ bool WrapICorJitInfo::notifyInstructionSetUsage(
     return temp;
 }
 
+void WrapICorJitInfo::updateEntryPointForTailCall(
+          CORINFO_CONST_LOOKUP* entryPoint)
+{
+    API_ENTER(updateEntryPointForTailCall);
+    wrapHnd->updateEntryPointForTailCall(entryPoint);
+    API_LEAVE(updateEntryPointForTailCall);
+}
+
 void WrapICorJitInfo::allocMem(
           AllocMemArgs* pArgs)
 {
@@ -1685,6 +1686,16 @@ uint32_t WrapICorJitInfo::getJitFlags(
     API_ENTER(getJitFlags);
     uint32_t temp = wrapHnd->getJitFlags(flags, sizeInBytes);
     API_LEAVE(getJitFlags);
+    return temp;
+}
+
+bool WrapICorJitInfo::doesFieldBelongToClass(
+          CORINFO_FIELD_HANDLE fldHnd,
+          CORINFO_CLASS_HANDLE cls)
+{
+    API_ENTER(doesFieldBelongToClass);
+    bool temp = wrapHnd->doesFieldBelongToClass(fldHnd, cls);
+    API_LEAVE(doesFieldBelongToClass);
     return temp;
 }
 

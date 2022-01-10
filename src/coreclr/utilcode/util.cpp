@@ -48,10 +48,10 @@ void InitWinRTStatus()
     WinRTStatusEnum winRTStatus = WINRT_STATUS_UNSUPPORTED;
 
     const WCHAR wszComBaseDll[] = W("\\combase.dll");
-    const SIZE_T cchComBaseDll = _countof(wszComBaseDll);
+    const SIZE_T cchComBaseDll = ARRAY_SIZE(wszComBaseDll);
 
     WCHAR wszComBasePath[MAX_LONGPATH + 1];
-    const SIZE_T cchComBasePath = _countof(wszComBasePath);
+    const SIZE_T cchComBasePath = ARRAY_SIZE(wszComBasePath);
 
     ZeroMemory(wszComBasePath, cchComBasePath * sizeof(wszComBasePath[0]));
 
@@ -350,168 +350,6 @@ HRESULT FakeCoCreateInstanceEx(REFCLSID       rclsid,
     }
 
     return hr;
-}
-
-#if USE_UPPER_ADDRESS
-static BYTE * s_CodeMinAddr;        // Preferred region to allocate the code in.
-static BYTE * s_CodeMaxAddr;
-static BYTE * s_CodeAllocStart;
-static BYTE * s_CodeAllocHint;      // Next address to try to allocate for code in the preferred region.
-#endif
-
-//
-// Use this function to initialize the s_CodeAllocHint
-// during startup. base is runtime .dll base address,
-// size is runtime .dll virtual size.
-//
-void InitCodeAllocHint(SIZE_T base, SIZE_T size, int randomPageOffset)
-{
-#if USE_UPPER_ADDRESS
-
-#ifdef _DEBUG
-    // If GetForceRelocs is enabled we don't constrain the pMinAddr
-    if (PEDecoder::GetForceRelocs())
-        return;
-#endif
-
-//
-    // If we are using the UPPER_ADDRESS space (on Win64)
-    // then for any code heap that doesn't specify an address
-    // range using [pMinAddr..pMaxAddr] we place it in the
-    // upper address space
-    // This enables us to avoid having to use long JumpStubs
-    // to reach the code for our ngen-ed images.
-    // Which are also placed in the UPPER_ADDRESS space.
-    //
-    SIZE_T reach = 0x7FFF0000u;
-
-    // We will choose the preferred code region based on the address of clr.dll. The JIT helpers
-    // in clr.dll are the most heavily called functions.
-    s_CodeMinAddr = (base + size > reach) ? (BYTE *)(base + size - reach) : (BYTE *)0;
-    s_CodeMaxAddr = (base + reach > base) ? (BYTE *)(base + reach) : (BYTE *)-1;
-
-    BYTE * pStart;
-
-    if (s_CodeMinAddr <= (BYTE *)CODEHEAP_START_ADDRESS &&
-        (BYTE *)CODEHEAP_START_ADDRESS < s_CodeMaxAddr)
-    {
-        // clr.dll got loaded at its preferred base address? (OS without ASLR - pre-Vista)
-        // Use the code head start address that does not cause collisions with NGen images.
-        // This logic is coupled with scripts that we use to assign base addresses.
-        pStart = (BYTE *)CODEHEAP_START_ADDRESS;
-    }
-    else
-    if (base > UINT32_MAX)
-    {
-        // clr.dll got address assigned by ASLR?
-        // Try to occupy the space as far as possible to minimize collisions with other ASLR assigned
-        // addresses. Do not start at s_CodeMinAddr exactly so that we can also reach common native images
-        // that can be placed at higher addresses than clr.dll.
-        pStart = s_CodeMinAddr + (s_CodeMaxAddr - s_CodeMinAddr) / 8;
-    }
-    else
-    {
-        // clr.dll missed the base address?
-        // Try to occupy the space right after it.
-        pStart = (BYTE *)(base + size);
-    }
-
-    // Randomize the address space
-    pStart += GetOsPageSize() * randomPageOffset;
-
-    s_CodeAllocStart = pStart;
-    s_CodeAllocHint = pStart;
-#endif
-}
-
-//
-// Use this function to reset the s_CodeAllocHint
-// after unloading an AppDomain
-//
-void ResetCodeAllocHint()
-{
-    LIMITED_METHOD_CONTRACT;
-#if USE_UPPER_ADDRESS
-    s_CodeAllocHint = s_CodeAllocStart;
-#endif
-}
-
-//
-// Returns TRUE if p is located in near clr.dll that allows us
-// to use rel32 IP-relative addressing modes.
-//
-BOOL IsPreferredExecutableRange(void * p)
-{
-    LIMITED_METHOD_CONTRACT;
-#if USE_UPPER_ADDRESS
-    if (s_CodeMinAddr <= (BYTE *)p && (BYTE *)p < s_CodeMaxAddr)
-        return TRUE;
-#endif
-    return FALSE;
-}
-
-//
-// Allocate free memory that will be used for executable code
-// Handles the special requirements that we have on 64-bit platforms
-// where we want the executable memory to be located near clr.dll
-//
-BYTE * ClrVirtualAllocExecutable(SIZE_T dwSize,
-                                 DWORD flAllocationType,
-                                 DWORD flProtect)
-{
-    CONTRACTL
-    {
-        NOTHROW;
-    }
-    CONTRACTL_END;
-
-#if USE_UPPER_ADDRESS
-    //
-    // If we are using the UPPER_ADDRESS space (on Win64)
-    // then for any heap that will contain executable code
-    // we will place it in the upper address space
-    //
-    // This enables us to avoid having to use JumpStubs
-    // to reach the code for our ngen-ed images on x64,
-    // since they are also placed in the UPPER_ADDRESS space.
-    //
-    BYTE * pHint = s_CodeAllocHint;
-
-    if (dwSize <= (SIZE_T)(s_CodeMaxAddr - s_CodeMinAddr) && pHint != NULL)
-    {
-        // Try to allocate in the preferred region after the hint
-        BYTE * pResult = ClrVirtualAllocWithinRange(pHint, s_CodeMaxAddr, dwSize, flAllocationType, flProtect);
-
-        if (pResult != NULL)
-        {
-            s_CodeAllocHint = pResult + dwSize;
-            return pResult;
-        }
-
-        // Try to allocate in the preferred region before the hint
-        pResult = ClrVirtualAllocWithinRange(s_CodeMinAddr, pHint + dwSize, dwSize, flAllocationType, flProtect);
-
-        if (pResult != NULL)
-        {
-            s_CodeAllocHint = pResult + dwSize;
-            return pResult;
-        }
-
-        s_CodeAllocHint = NULL;
-    }
-
-    // Fall through to
-#endif // USE_UPPER_ADDRESS
-
-#ifdef HOST_UNIX
-    // Tell PAL to use the executable memory allocator to satisfy this request for virtual memory.
-    // This will allow us to place JIT'ed code close to the coreclr library
-    // and thus improve performance by avoiding jump stubs in managed code.
-    flAllocationType |= MEM_RESERVE_EXECUTABLE;
-#endif // HOST_UNIX
-
-    return (BYTE *) ClrVirtualAlloc (NULL, dwSize, flAllocationType, flProtect);
-
 }
 
 //
@@ -1500,7 +1338,7 @@ void ConfigString::init(const CLRConfig::ConfigStringInfo & info)
 // MyAssembly;mscorlib;System
 // MyAssembly;mscorlib System
 
-AssemblyNamesList::AssemblyNamesList(__in LPWSTR list)
+AssemblyNamesList::AssemblyNamesList(_In_ LPWSTR list)
 {
     CONTRACTL {
         THROWS;
@@ -1592,7 +1430,7 @@ bool AssemblyNamesList::IsInList(LPCUTF8 assemblyName)
 // "MyClass:foo2 MyClass:*" will match under _DEBUG
 //
 
-void MethodNamesListBase::Insert(__in_z LPWSTR str)
+void MethodNamesListBase::Insert(_In_z_ LPWSTR str)
 {
     CONTRACTL {
         THROWS;
@@ -3245,7 +3083,7 @@ namespace Reg
         }
     }
 
-    HRESULT ReadStringValue(HKEY hKey, LPCWSTR wszSubKey, LPCWSTR wszName, __deref_out __deref_out_z LPWSTR* pwszValue)
+    HRESULT ReadStringValue(HKEY hKey, LPCWSTR wszSubKey, LPCWSTR wszName, _Outptr_ _Outptr_result_z_ LPWSTR* pwszValue)
     {
         CONTRACTL {
             NOTHROW;
@@ -3278,7 +3116,7 @@ namespace Com
             STANDARD_VM_CONTRACT;
 
             WCHAR wszClsid[39];
-            if (GuidToLPWSTR(rclsid, wszClsid, NumItems(wszClsid)) == 0)
+            if (GuidToLPWSTR(rclsid, wszClsid, ARRAY_SIZE(wszClsid)) == 0)
                 return E_UNEXPECTED;
 
             StackSString ssKeyName;

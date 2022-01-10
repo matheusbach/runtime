@@ -508,6 +508,17 @@ namespace System.StubHelpers
             managed.Slice(0, numChars).CopyTo(native);
             native[numChars] = '\0';
         }
+
+        internal static unsafe string ConvertToManaged(IntPtr nativeHome, int length)
+        {
+            int end = SpanHelpers.IndexOf(ref *(char*)nativeHome, '\0', length);
+            if (end != -1)
+            {
+                length = end;
+            }
+
+            return new string((char*)nativeHome, 0, length);
+        }
     }  // class WSTRBufferMarshaler
 #if FEATURE_COMINTEROP
 
@@ -567,7 +578,7 @@ namespace System.StubHelpers
     }  // class DateMarshaler
 
 #if FEATURE_COMINTEROP
-    internal static class InterfaceMarshaler
+    internal static partial class InterfaceMarshaler
     {
         [MethodImpl(MethodImplOptions.InternalCall)]
         internal static extern IntPtr ConvertToNative(object objSrc, IntPtr itfMT, IntPtr classMT, int flags);
@@ -575,8 +586,8 @@ namespace System.StubHelpers
         [MethodImpl(MethodImplOptions.InternalCall)]
         internal static extern object ConvertToManaged(ref IntPtr ppUnk, IntPtr itfMT, IntPtr classMT, int flags);
 
-        [DllImport(RuntimeHelpers.QCall)]
-        internal static extern void ClearNative(IntPtr pUnk);
+        [GeneratedDllImport(RuntimeHelpers.QCall, EntryPoint = "InterfaceMarshaler__ClearNative")]
+        internal static partial void ClearNative(IntPtr pUnk);
     }  // class InterfaceMarshaler
 #endif // FEATURE_COMINTEROP
 
@@ -739,7 +750,7 @@ namespace System.StubHelpers
         private unsafe IntPtr ConvertArrayToNative(object pManagedHome, int dwFlags)
         {
             Type elementType = pManagedHome.GetType().GetElementType()!;
-            VarEnum vt = VarEnum.VT_EMPTY;
+            VarEnum vt;
 
             switch (Type.GetTypeCode(elementType))
             {
@@ -1167,13 +1178,10 @@ namespace System.StubHelpers
     internal static class StubHelpers
     {
         [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern void InitDeclaringType(IntPtr pMD);
-
-        [MethodImpl(MethodImplOptions.InternalCall)]
         internal static extern IntPtr GetNDirectTarget(IntPtr pMD);
 
         [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern IntPtr GetDelegateTarget(Delegate pThis, ref IntPtr pStubArg);
+        internal static extern IntPtr GetDelegateTarget(Delegate pThis);
 
         [MethodImpl(MethodImplOptions.InternalCall)]
         internal static extern void ClearLastError();
@@ -1340,11 +1348,6 @@ namespace System.StubHelpers
         [MethodImpl(MethodImplOptions.InternalCall)]
         internal static extern IntPtr GetStubContext();
 
-#if TARGET_64BIT
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern IntPtr GetStubContextAddr();
-#endif // TARGET_64BIT
-
 #if FEATURE_ARRAYSTUB_AS_IL
         [MethodImpl(MethodImplOptions.InternalCall)]
         internal static extern void ArrayTypeCheck(object o, object[] arr);
@@ -1355,6 +1358,7 @@ namespace System.StubHelpers
         internal static extern void MulticastDebuggerTraceHelper(object o, int count);
 #endif
 
+        [Intrinsic]
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         internal static extern IntPtr NextCallReturnAddress();
     }  // class StubHelpers

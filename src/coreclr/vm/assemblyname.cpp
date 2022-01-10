@@ -52,17 +52,12 @@ FCIMPL1(Object*, AssemblyNameNative::GetFileInformation, StringObject* filenameU
     SString sFileName(gc.filename->GetBuffer());
     PEImageHolder pImage = PEImage::OpenImage(sFileName, MDInternalImport_NoCache);
 
-    // Load the temporary image using a flat layout, instead of
-    // waiting for it to happen during HasNTHeaders. This allows us to
-    // get the assembly name for images that contain native code for a
-    // non-native platform.
-    PEImageLayoutHolder pLayout(pImage->GetLayout(PEImageLayout::LAYOUT_FLAT, PEImage::LAYOUT_CREATEIFNEEDED));
+    // Ask for FLAT. We will only look at metadata and release the image shortly.
+    // Besides we may be getting the assembly name for images that contain native code for a
+    // non-native platform and would end up using flat anyways.
+    PEImageLayout* pLayout = pImage->GetOrCreateLayout(PEImageLayout::LAYOUT_FLAT);
 
-    // Allow AssemblyLoadContext.GetAssemblyName for native images on CoreCLR
-    if (pImage->HasNTHeaders() && pImage->HasCorHeader() && pImage->HasNativeHeader())
-        pImage->VerifyIsNIAssembly();
-    else
-        pImage->VerifyIsAssembly();
+    pImage->VerifyIsAssembly();
 
     AssemblySpec spec;
     spec.InitializeSpec(TokenFromRid(mdtAssembly,1),pImage->GetMDImport(),NULL);

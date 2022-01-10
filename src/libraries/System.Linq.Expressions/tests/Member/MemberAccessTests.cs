@@ -8,7 +8,6 @@ using Xunit;
 
 namespace System.Linq.Expressions.Tests
 {
-    [ActiveIssue("https://github.com/dotnet/runtime/issues/51952", TestPlatforms.tvOS)]
     public static class MemberAccessTests
     {
         private class UnreadableIndexableClass
@@ -553,8 +552,7 @@ namespace System.Linq.Expressions.Tests
             AssertExtensions.Throws<ArgumentException>("member", () => Expression.MakeMemberAccess(Expression.Constant(new PC()), member));
         }
 
-#if FEATURE_COMPILE
-        [Fact]
+        [ConditionalFact(typeof(PlatformDetection), nameof(PlatformDetection.IsReflectionEmitSupported))]
         [ActiveIssue("https://github.com/mono/mono/issues/14920", TestRuntimes.Mono)]
         public static void Property_NoGetOrSetAccessors_ThrowsArgumentException()
         {
@@ -576,7 +574,6 @@ namespace System.Linq.Expressions.Tests
 
             AssertExtensions.Throws<ArgumentException>("property", () => Expression.MakeMemberAccess(expression, createdProperty));
         }
-#endif
 
         [Fact]
         public static void ToStringTest()

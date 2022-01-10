@@ -328,12 +328,12 @@ namespace System.Text.Json.Serialization.Tests
         [Fact]
         public static void Options_GetConverterForObjectJsonElement_GivesCorrectConverter()
         {
-            GenericObjectOrJsonElementConverterTestHelper<object>("ObjectConverter", new object(), "[3]", true);
+            GenericObjectOrJsonElementConverterTestHelper<object>("ObjectConverter", new object(), "{}");
             JsonElement element = JsonDocument.Parse("[3]").RootElement;
-            GenericObjectOrJsonElementConverterTestHelper<JsonElement>("JsonElementConverter", element, "[3]", false);
+            GenericObjectOrJsonElementConverterTestHelper<JsonElement>("JsonElementConverter", element, "[3]");
         }
 
-        private static void GenericObjectOrJsonElementConverterTestHelper<T>(string converterName, object objectValue, string stringValue, bool throws)
+        private static void GenericObjectOrJsonElementConverterTestHelper<T>(string converterName, object objectValue, string stringValue)
         {
             var options = new JsonSerializerOptions();
 
@@ -347,10 +347,7 @@ namespace System.Text.Json.Serialization.Tests
 
             if (readValue is JsonElement element)
             {
-                Assert.Equal(JsonValueKind.Array, element.ValueKind);
-                JsonElement.ArrayEnumerator iterator = element.EnumerateArray();
-                Assert.True(iterator.MoveNext());
-                Assert.Equal(3, iterator.Current.GetInt32());
+                JsonTestHelper.AssertJsonEqual(stringValue, element.ToString());
             }
             else
             {
@@ -360,22 +357,14 @@ namespace System.Text.Json.Serialization.Tests
             using (var stream = new MemoryStream())
             using (var writer = new Utf8JsonWriter(stream))
             {
-                if (throws)
-                {
-                    Assert.Throws<InvalidOperationException>(() => converter.Write(writer, (T)objectValue, options));
-                    Assert.Throws<InvalidOperationException>(() => converter.Write(writer, (T)objectValue, null));
-                }
-                else
-                {
-                    converter.Write(writer, (T)objectValue, options);
-                    writer.Flush();
-                    Assert.Equal(stringValue, Encoding.UTF8.GetString(stream.ToArray()));
+                converter.Write(writer, (T)objectValue, options);
+                writer.Flush();
+                Assert.Equal(stringValue, Encoding.UTF8.GetString(stream.ToArray()));
 
-                    writer.Reset(stream);
-                    converter.Write(writer, (T)objectValue, null); // Test with null option
-                    writer.Flush();
-                    Assert.Equal(stringValue + stringValue, Encoding.UTF8.GetString(stream.ToArray()));
-                }
+                writer.Reset(stream);
+                converter.Write(writer, (T)objectValue, null); // Test with null option
+                writer.Flush();
+                Assert.Equal(stringValue + stringValue, Encoding.UTF8.GetString(stream.ToArray()));
             }
         }
 
@@ -524,6 +513,28 @@ namespace System.Text.Json.Serialization.Tests
         }
 
         [Fact]
+        public static void JsonSerializerOptions_Default_MatchesDefaultConstructor()
+        {
+            var options = new JsonSerializerOptions();
+            JsonSerializerOptions optionsSingleton = JsonSerializerOptions.Default;
+            VerifyOptionsEqual(options, optionsSingleton);
+        }
+
+        [Fact]
+        public static void JsonSerializerOptions_Default_ReturnsSameInstance()
+        {
+            Assert.Same(JsonSerializerOptions.Default, JsonSerializerOptions.Default);
+        }
+
+        [Fact]
+        public static void JsonSerializerOptions_Default_IsReadOnly()
+        {
+            var optionsSingleton = JsonSerializerOptions.Default;
+            Assert.Throws<InvalidOperationException>(() => optionsSingleton.IncludeFields = true);
+            Assert.Throws<InvalidOperationException>(() => optionsSingleton.Converters.Add(new JsonStringEnumConverter()));
+        }
+
+        [Fact]
         public static void DefaultSerializerOptions_General()
         {
             var options = new JsonSerializerOptions();
@@ -553,7 +564,7 @@ namespace System.Text.Json.Serialization.Tests
         {
             var options = new JsonSerializerOptions();
 
-            foreach (PropertyInfo property in typeof(JsonSerializerOptions).GetProperties())
+            foreach (PropertyInfo property in typeof(JsonSerializerOptions).GetProperties(BindingFlags.Public | BindingFlags.Instance))
             {
                 Type propertyType = property.PropertyType;
 
@@ -607,7 +618,7 @@ namespace System.Text.Json.Serialization.Tests
 
         private static void VerifyOptionsEqual(JsonSerializerOptions options, JsonSerializerOptions newOptions)
         {
-            foreach (PropertyInfo property in typeof(JsonSerializerOptions).GetProperties())
+            foreach (PropertyInfo property in typeof(JsonSerializerOptions).GetProperties(BindingFlags.Public | BindingFlags.Instance))
             {
                 Type propertyType = property.PropertyType;
 

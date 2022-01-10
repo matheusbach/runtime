@@ -15,7 +15,7 @@ static bool
 hot_reload_stub_available (void);
 
 static void
-hot_reload_stub_apply_changes (MonoImage *base_image, gconstpointer dmeta, uint32_t dmeta_len, gconstpointer dil, uint32_t dil_len, MonoError *error);
+hot_reload_stub_apply_changes (int origin, MonoImage *base_image, gconstpointer dmeta, uint32_t dmeta_len, gconstpointer dil, uint32_t dil_len, gconstpointer dpdb_bytes_orig, uint32_t dpdb_length, MonoError *error);
 
 static MonoComponentHotReload *
 component_hot_reload_stub_init (void);
@@ -39,10 +39,7 @@ static void
 hot_reload_stub_cleanup_on_close (MonoImage *image);
 
 static void
-hot_reload_stub_effective_table_slow (const MonoTableInfo **t, int *idx);
-
-static int
-hot_reload_stub_relative_delta_index (MonoImage *image_dmeta, int token);
+hot_reload_stub_effective_table_slow (const MonoTableInfo **t, int idx);
 
 static void
 hot_reload_stub_close_except_pools_all (MonoImage *base_image);
@@ -59,6 +56,21 @@ hot_reload_stub_table_bounds_check (MonoImage *base_image, int table_index, int 
 static gboolean
 hot_reload_stub_delta_heap_lookup (MonoImage *base_image, MetadataHeapGetterFunc get_heap, uint32_t orig_index, MonoImage **image_out, uint32_t *index_out);
 
+static gpointer
+hot_reload_stub_get_updated_method_ppdb (MonoImage *base_image, uint32_t idx);
+
+static gboolean
+hot_reload_stub_has_modified_rows (const MonoTableInfo *table);
+
+static int
+hot_reload_stub_table_num_rows_slow (MonoImage *image, int table_index);
+
+static GArray*
+hot_reload_stub_get_added_methods (MonoClass *klass);
+
+static uint32_t
+hot_reload_stub_method_parent (MonoImage *image, uint32_t method_index);
+
 static MonoComponentHotReload fn_table = {
 	{ MONO_COMPONENT_ITF_VERSION, &hot_reload_stub_available },
 	&hot_reload_stub_set_fastpath_data,
@@ -68,13 +80,17 @@ static MonoComponentHotReload fn_table = {
 	&hot_reload_stub_get_thread_generation,
 	&hot_reload_stub_cleanup_on_close,
 	&hot_reload_stub_effective_table_slow,
-	&hot_reload_stub_relative_delta_index,
 	&hot_reload_stub_apply_changes,
 	&hot_reload_stub_close_except_pools_all,
 	&hot_reload_stub_close_all,
 	&hot_reload_stub_get_updated_method_rva,
 	&hot_reload_stub_table_bounds_check,
 	&hot_reload_stub_delta_heap_lookup,
+	&hot_reload_stub_get_updated_method_ppdb,
+	&hot_reload_stub_has_modified_rows,
+	&hot_reload_stub_table_num_rows_slow,
+	&hot_reload_stub_get_added_methods,
+	&hot_reload_stub_method_parent,
 };
 
 static bool
@@ -127,19 +143,13 @@ hot_reload_stub_cleanup_on_close (MonoImage *image)
 }
 
 void
-hot_reload_stub_effective_table_slow (const MonoTableInfo **t, int *idx)
-{
-	g_assert_not_reached ();
-}
-
-static int
-hot_reload_stub_relative_delta_index (MonoImage *image_dmeta, int token)
+hot_reload_stub_effective_table_slow (const MonoTableInfo **t, int idx)
 {
 	g_assert_not_reached ();
 }
 
 void
-hot_reload_stub_apply_changes (MonoImage *base_image, gconstpointer dmeta, uint32_t dmeta_len, gconstpointer dil, uint32_t dil_len, MonoError *error)
+hot_reload_stub_apply_changes (int origin, MonoImage *base_image, gconstpointer dmeta, uint32_t dmeta_len, gconstpointer dil, uint32_t dil_len, gconstpointer dpdb_bytes_orig, uint32_t dpdb_length, MonoError *error)
 {
 	mono_error_set_not_supported (error, "Hot reload not supported in this runtime.");
 }
@@ -171,6 +181,37 @@ hot_reload_stub_delta_heap_lookup (MonoImage *base_image, MetadataHeapGetterFunc
 {
 	g_assert_not_reached ();
 }
+
+static gpointer
+hot_reload_stub_get_updated_method_ppdb (MonoImage *base_image, uint32_t idx)
+{
+	g_assert_not_reached ();
+}
+
+static gboolean
+hot_reload_stub_has_modified_rows (const MonoTableInfo *table)
+{
+	return FALSE;
+}
+
+static int
+hot_reload_stub_table_num_rows_slow (MonoImage *image, int table_index)
+{
+	g_assert_not_reached (); /* should always take the fast path */
+}
+
+static GArray*
+hot_reload_stub_get_added_methods (MonoClass *klass)
+{
+	return NULL;
+}
+
+static uint32_t
+hot_reload_stub_method_parent (MonoImage *image, uint32_t method_index)
+{
+	return 0;
+}
+
 
 MONO_COMPONENT_EXPORT_ENTRYPOINT
 MonoComponentHotReload *

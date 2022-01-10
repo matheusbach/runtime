@@ -20,6 +20,7 @@ namespace System
         public static bool IsDebian => IsDistroAndVersion("debian");
         public static bool IsAlpine => IsDistroAndVersion("alpine");
         public static bool IsDebian8 => IsDistroAndVersion("debian", 8);
+        public static bool IsDebian9 => IsDistroAndVersion("debian", 9);
         public static bool IsDebian10 => IsDistroAndVersion("debian", 10);
         public static bool IsUbuntu1604 => IsDistroAndVersion("ubuntu", 16, 4);
         public static bool IsUbuntu1704 => IsDistroAndVersion("ubuntu", 17, 4);
@@ -27,6 +28,7 @@ namespace System
         public static bool IsUbuntu1710OrHigher => IsDistroAndVersionOrHigher("ubuntu", 17, 10);
         public static bool IsUbuntu1804 => IsDistroAndVersion("ubuntu", 18, 04);
         public static bool IsUbuntu1810OrHigher => IsDistroAndVersionOrHigher("ubuntu", 18, 10);
+        public static bool IsMariner => IsDistroAndVersion("mariner");
         public static bool IsSLES => IsDistroAndVersion("sles");
         public static bool IsTizen => IsDistroAndVersion("tizen");
         public static bool IsFedora => IsDistroAndVersion("fedora");
@@ -39,6 +41,8 @@ namespace System
         public static bool IsMacOsCatalinaOrHigher => IsOSX && Environment.OSVersion.Version >= new Version(10, 15);
         public static bool IsMacOsAppleSilicon => IsOSX && IsArm64Process;
         public static bool IsNotMacOsAppleSilicon => !IsMacOsAppleSilicon;
+        public static bool IsAppSandbox => Environment.GetEnvironmentVariable("APP_SANDBOX_CONTAINER_ID") != null;
+        public static bool IsNotAppSandbox => !IsAppSandbox;
 
         // RedHat family covers RedHat and CentOS
         public static bool IsRedHatFamily => IsRedHatFamilyAndVersion();
@@ -47,7 +51,7 @@ namespace System
         public static bool IsNotFedoraOrRedHatFamily => !IsFedora && !IsRedHatFamily;
         public static bool IsNotDebian10 => !IsDebian10;
 
-        public static bool IsSuperUser => IsBrowser || IsWindows ? false : libc.geteuid() == 0;
+        public static bool IsSuperUser => IsBrowser || IsWindows ? false : Libc.geteuid() == 0;
 
         public static Version OpenSslVersion => !IsOSXLike && !IsWindows && !IsAndroid ?
             GetOpenSslVersion() :
@@ -68,7 +72,7 @@ namespace System
 
                 try
                 {
-                    return Marshal.PtrToStringAnsi(libc.gnu_get_libc_release());
+                    return Marshal.PtrToStringAnsi(Libc.gnu_get_libc_release());
                 }
                 catch (Exception e) when (e is DllNotFoundException || e is EntryPointNotFoundException)
                 {
@@ -92,7 +96,7 @@ namespace System
 
                 try
                 {
-                    return Marshal.PtrToStringAnsi(libc.gnu_get_libc_version());
+                    return Marshal.PtrToStringAnsi(Libc.gnu_get_libc_version());
                 }
                 catch (Exception e) when (e is DllNotFoundException || e is EntryPointNotFoundException)
                 {
@@ -315,16 +319,16 @@ namespace System
             public Version VersionId { get; set; }
         }
 
-        private static class libc
+        private static partial class Libc
         {
-            [DllImport("libc", SetLastError = true)]
-            public static extern unsafe uint geteuid();
+            [GeneratedDllImport("libc", SetLastError = true)]
+            public static unsafe partial uint geteuid();
 
-            [DllImport("libc", CharSet = CharSet.Ansi, CallingConvention = CallingConvention.Cdecl)]
-            public static extern IntPtr gnu_get_libc_release();
+            [GeneratedDllImport("libc")]
+            public static partial IntPtr gnu_get_libc_release();
 
-            [DllImport("libc", CharSet = CharSet.Ansi, CallingConvention = CallingConvention.Cdecl)]
-            public static extern IntPtr gnu_get_libc_version();
+            [GeneratedDllImport("libc")]
+            public static partial IntPtr gnu_get_libc_version();
         }
     }
 }

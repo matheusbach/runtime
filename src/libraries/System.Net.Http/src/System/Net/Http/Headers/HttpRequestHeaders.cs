@@ -2,7 +2,6 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System.Diagnostics;
-using System.Diagnostics.CodeAnalysis;
 
 namespace System.Net.Http.Headers
 {
@@ -52,26 +51,17 @@ namespace System.Net.Http.Headers
             set { SetOrRemoveParsedValue(KnownHeaders.Authorization.Descriptor, value); }
         }
 
-        public HttpHeaderValueCollection<NameValueWithParametersHeaderValue> Expect
-        {
-            get { return ExpectCore; }
-        }
-
         public bool? ExpectContinue
         {
             get
             {
-                // ExpectCore will force the collection into existence, so avoid accessing it if possible.
-                if (_expectContinueSet || ContainsParsedValue(KnownHeaders.Expect.Descriptor, HeaderUtilities.ExpectContinue))
+                if (ContainsParsedValue(KnownHeaders.Expect.Descriptor, HeaderUtilities.ExpectContinue))
                 {
-                    if (ExpectCore.IsSpecialValueSet)
-                    {
-                        return true;
-                    }
-                    if (_expectContinueSet)
-                    {
-                        return false;
-                    }
+                    return true;
+                }
+                if (_expectContinueSet)
+                {
+                    return false;
                 }
 
                 return null;
@@ -81,12 +71,16 @@ namespace System.Net.Http.Headers
                 if (value == true)
                 {
                     _expectContinueSet = true;
-                    ExpectCore.SetSpecialValue();
+                    if (!ContainsParsedValue(KnownHeaders.Expect.Descriptor, HeaderUtilities.ExpectContinue))
+                    {
+                        AddParsedValue(KnownHeaders.Expect.Descriptor, HeaderUtilities.ExpectContinue);
+                    }
                 }
                 else
                 {
                     _expectContinueSet = value != null;
-                    ExpectCore.RemoveSpecialValue();
+                    // We intentionally ignore the return value. It's OK if "100-continue" wasn't in the store.
+                    RemoveParsedValue(KnownHeaders.Expect.Descriptor, HeaderUtilities.ExpectContinue);
                 }
             }
         }
@@ -101,6 +95,8 @@ namespace System.Net.Http.Headers
                 {
                     value = null;
                 }
+
+                CheckContainsNewLine(value);
 
                 SetOrRemoveParsedValue(KnownHeaders.From.Descriptor, value);
             }
@@ -188,8 +184,8 @@ namespace System.Net.Http.Headers
         public HttpHeaderValueCollection<ProductInfoHeaderValue> UserAgent =>
             GetSpecializedCollection(UserAgentSlot, static thisRef => new HttpHeaderValueCollection<ProductInfoHeaderValue>(KnownHeaders.UserAgent.Descriptor, thisRef));
 
-        private HttpHeaderValueCollection<NameValueWithParametersHeaderValue> ExpectCore =>
-            _expect ??= new HttpHeaderValueCollection<NameValueWithParametersHeaderValue>(KnownHeaders.Expect.Descriptor, this, HeaderUtilities.ExpectContinue);
+        public HttpHeaderValueCollection<NameValueWithParametersHeaderValue> Expect =>
+            _expect ??= new HttpHeaderValueCollection<NameValueWithParametersHeaderValue>(KnownHeaders.Expect.Descriptor, this);
 
         #endregion
 
